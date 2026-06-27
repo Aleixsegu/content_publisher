@@ -89,9 +89,9 @@ jobs:
       # Para obtenerlas: instalar extensión "Get cookies.txt LOCALLY" en Chrome,
       # ir a tiktok.com, exportar y guardar el contenido como GitHub Secret.
       - name: "🍪 Configurar cookies de TikTok (si están disponibles)"
-        if: ${{ secrets.TIKTOK_COOKIES != '' }}
         env:
           TIKTOK_COOKIES: ${{ secrets.TIKTOK_COOKIES }}
+        if: ${{ env.TIKTOK_COOKIES != '' }}
         run: |
           echo "$TIKTOK_COOKIES" > /tmp/tiktok_cookies.txt
           echo "✅ Archivo de cookies creado en /tmp/tiktok_cookies.txt"
