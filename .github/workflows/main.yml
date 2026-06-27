@@ -26,7 +26,7 @@
 #                          Recomendado para evitar bloqueos de IP en runners cloud.
 # =============================================================================
 
-name: "🤖 Publicar Memes Diarios — TikTok → Instagram (Stack Gratuito)"
+name: "🤖 Publicar Contenido Diario — TikTok → Instagram"
 
 on:
   schedule:
