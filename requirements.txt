@@ -1,0 +1,19 @@
+# =============================================================================
+# requirements.txt — Stack 100% Gratuito
+# =============================================================================
+# Sistema de publicación de memes: TikTok → Instagram
+#
+# NINGUNA de estas dependencias es de pago.
+# yt-dlp sustituye completamente a cualquier API de TikTok de pago (RapidAPI, etc.)
+# La subida a Meta se hace vía rupload.facebook.com, sin Cloudinary ni S3.
+# =============================================================================
+
+# Descarga de videos y scraping de metadatos de TikTok (open source, gratuito)
+# Repositorio: https://github.com/yt-dlp/yt-dlp
+yt-dlp>=2024.1.1
+
+# Cliente HTTP para llamadas a la API de Meta Graph y rupload.facebook.com
+requests>=2.31.0,<3.0.0
+
+# Manejo de zonas horarias (CET/CEST para publicación a las 18:00 Madrid)
+pytz>=2024.1

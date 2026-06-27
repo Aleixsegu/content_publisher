@@ -1,0 +1,174 @@
+# =============================================================================
+# .github/workflows/main.yml — Stack 100% Gratuito
+# =============================================================================
+# Sistema Automatizado de Publicación de Memes: TikTok → Instagram
+#
+# HERRAMIENTAS UTILIZADAS (todas gratuitas y open source):
+#   • yt-dlp     → Scraping de metadatos y descarga sin watermark de TikTok
+#   • FFmpeg      → Sanitización, re-encode y format conversion de videos
+#   • Meta rupload → Subida binaria directa a Meta (sin hosting externo)
+#   • Meta Graph API → Publicación en Instagram Reels y Stories
+#
+# PROGRAMACIÓN (18:00 hora de Madrid):
+#   España usa CET (UTC+1) en invierno y CEST (UTC+2) en verano.
+#   Se definen DOS expresiones cron para cubrir ambos horarios:
+#     • 0 16 * * * → Verano CEST (UTC+2): 16:00 UTC = 18:00 Madrid
+#     • 0 17 * * * → Invierno CET (UTC+1): 17:00 UTC = 18:00 Madrid
+#
+# SECRETOS REQUERIDOS (GitHub → Settings → Secrets → Actions):
+#   META_ACCESS_TOKEN      Token de larga duración de Meta Graph API (60 días)
+#   INSTAGRAM_ACCOUNT_ID   ID numérico de la cuenta Instagram Business/Creator
+#   META_APP_ID            App ID de tu aplicación en Meta for Developers
+#
+# SECRETO OPCIONAL:
+#   TIKTOK_COOKIES         Contenido del archivo cookies.txt de TikTok
+#                          (formato Netscape, exportado desde el navegador)
+#                          Recomendado para evitar bloqueos de IP en runners cloud.
+# =============================================================================
+
+name: "🤖 Publicar Memes Diarios — TikTok → Instagram (Stack Gratuito)"
+
+on:
+  schedule:
+    # Horario VERANO (CEST, UTC+2): 16:00 UTC = 18:00 Madrid
+    - cron: "0 16 * * *"
+    # Horario INVIERNO (CET, UTC+1): 17:00 UTC = 18:00 Madrid
+    - cron: "0 17 * * *"
+
+  # Ejecución manual desde la interfaz de GitHub (ideal para pruebas)
+  workflow_dispatch:
+    inputs:
+      solo_descubrir:
+        description: "Solo descubrir videos (sin publicar) — modo diagnóstico"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+permissions:
+  contents: read
+
+jobs:
+  publicar-memes:
+    name: "Descubrir → Procesar → Publicar"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330  # 5h 30min máximo (cubre las 4 Stories en 24h)
+
+    steps:
+      # ── Paso 1: Obtener el código ─────────────────────────────────────
+      - name: "📥 Checkout del repositorio"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ── Paso 2: Configurar Python ─────────────────────────────────────
+      - name: "🐍 Configurar Python 3.11"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: "requirements.txt"
+
+      # ── Paso 3: Instalar FFmpeg ───────────────────────────────────────
+      - name: "🎬 Instalar FFmpeg"
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          echo "✅ FFmpeg $(ffmpeg -version 2>&1 | head -1 | cut -d' ' -f3) instalado"
+
+      # ── Paso 4: Instalar dependencias Python ──────────────────────────
+      - name: "📦 Instalar dependencias Python (yt-dlp + requests)"
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          echo "✅ Versión de yt-dlp: $(yt-dlp --version)"
+
+      # ── Paso 5: Configurar cookies de TikTok (opcional) ──────────────
+      # Las cookies de sesión ayudan a evitar que TikTok bloquee peticiones
+      # desde IPs de datacenters de GitHub Actions.
+      # Para obtenerlas: instalar extensión "Get cookies.txt LOCALLY" en Chrome,
+      # ir a tiktok.com, exportar y guardar el contenido como GitHub Secret.
+      - name: "🍪 Configurar cookies de TikTok (si están disponibles)"
+        if: ${{ secrets.TIKTOK_COOKIES != '' }}
+        env:
+          TIKTOK_COOKIES: ${{ secrets.TIKTOK_COOKIES }}
+        run: |
+          echo "$TIKTOK_COOKIES" > /tmp/tiktok_cookies.txt
+          echo "✅ Archivo de cookies creado en /tmp/tiktok_cookies.txt"
+          echo "TIKTOK_COOKIES_FILE=/tmp/tiktok_cookies.txt" >> $GITHUB_ENV
+
+      # ── Paso 6: Verificar entorno completo ───────────────────────────
+      - name: "🔍 Verificar entorno de ejecución"
+        run: |
+          echo "========================================"
+          echo "  VERIFICACIÓN DEL ENTORNO"
+          echo "========================================"
+          echo "🐍 Python:  $(python --version)"
+          echo "🎬 FFmpeg:  $(ffmpeg -version 2>&1 | head -1)"
+          echo "📥 yt-dlp:  $(yt-dlp --version)"
+          echo "💾 Disco:   $(df -h / | tail -1 | awk '{print $4}') disponibles"
+          echo "🧠 RAM:     $(free -h | grep Mem | awk '{print $7}') disponibles"
+          echo "🕐 Hora UTC:    $(date -u '+%Y-%m-%d %H:%M:%S')"
+          echo "🕐 Hora Madrid: $(TZ='Europe/Madrid' date '+%Y-%m-%d %H:%M:%S')"
+          echo "========================================"
+
+      # ── Paso 7: Ejecutar el sistema de publicación ───────────────────
+      - name: "🚀 Ejecutar sistema de publicación de memes"
+        env:
+          # ── Credenciales de Meta (únicas credenciales requeridas) ──
+          META_ACCESS_TOKEN:     ${{ secrets.META_ACCESS_TOKEN }}
+          INSTAGRAM_ACCOUNT_ID:  ${{ secrets.INSTAGRAM_ACCOUNT_ID }}
+          META_APP_ID:           ${{ secrets.META_APP_ID }}
+          # ── Cookies de TikTok (opcional, set en paso anterior) ─────
+          TIKTOK_COOKIES_FILE:   ${{ env.TIKTOK_COOKIES_FILE }}
+          # ── Contexto de ejecución para logs ────────────────────────
+          GITHUB_RUN_ID:         ${{ github.run_id }}
+          GITHUB_RUN_NUMBER:     ${{ github.run_number }}
+          SOLO_DESCUBRIR:        ${{ github.event.inputs.solo_descubrir || 'false' }}
+        run: |
+          echo "🤖 Iniciando pipeline..."
+          echo "   Run #$GITHUB_RUN_NUMBER (ID: $GITHUB_RUN_ID)"
+          echo "   Modo solo diagnóstico: $SOLO_DESCUBRIR"
+          python publicar_meme.py
+
+      # ── Paso 8: Archivar logs (siempre, incluso si hay error) ────────
+      - name: "📋 Archivar logs de ejecución"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "logs-memes-run-${{ github.run_number }}"
+          path: "publicar_meme.log"
+          retention-days: 14   # Conservar 2 semanas para diagnóstico
+
+      # ── Paso 9: Notificar fallo ───────────────────────────────────────
+      - name: "🚨 Diagnóstico en caso de fallo"
+        if: failure()
+        run: |
+          echo "═══════════════════════════════════════"
+          echo "  ❌ EL WORKFLOW HA FALLADO"
+          echo "═══════════════════════════════════════"
+          echo ""
+          echo "Causas más comunes:"
+          echo ""
+          echo "  1. TOKEN DE META EXPIRADO (causa #1)"
+          echo "     → Los tokens de larga duración expiran a los 60 días."
+          echo "     → Renovar en: Meta for Developers → Graph API Explorer"
+          echo "     → Actualizar el Secret META_ACCESS_TOKEN en GitHub"
+          echo ""
+          echo "  2. TIKTOK BLOQUEANDO EL RUNNER (causa #2)"
+          echo "     → Los IPs de GitHub Actions son conocidos como datacenters."
+          echo "     → Solución: añadir el Secret TIKTOK_COOKIES con cookies"
+          echo "       de sesión exportadas desde tu navegador con TikTok abierto."
+          echo "     → Extensión recomendada: 'Get cookies.txt LOCALLY' (Chrome)"
+          echo ""
+          echo "  3. SIN VIDEOS VÁLIDOS EN LAS ÚLTIMAS 24H"
+          echo "     → Puede ser temporal. Revisar logs del artefacto."
+          echo "     → Considerar ampliar la lista de hashtags en el script."
+          echo ""
+          echo "  4. FFMPEG NO DISPONIBLE"
+          echo "     → El Paso 3 de instalación de FFmpeg falló."
+          echo "     → Verificar la imagen base del runner (ubuntu-24.04)."
+          echo ""
+          echo "Descarga los logs completos desde:"
+          echo "  GitHub → Actions → Run #${{ github.run_number }} → Artifacts"
+          echo "═══════════════════════════════════════"
