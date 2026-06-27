@@ -44,6 +44,15 @@ Versión: 2.0.0 — Stack 100% Gratuito
 
 import os
 import sys
+
+# Forzar UTF-8 en la consola para evitar errores de codificación (UnicodeEncodeError) en Windows
+if sys.platform.startswith('win'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
 import time
 import json
 import math
@@ -80,12 +89,10 @@ logger = logging.getLogger(__name__)
 HASHTAGS_OBJETIVO = [
     "shitpostenespañol",
     "memesenespañol",
-    "humorlatino",
     "memesespaña",
     "shitpostespañol",
     "memesespañoles",
     "humorspain",
-    "memelatino",
 ]
 
 # Número de videos a seleccionar para publicación
@@ -236,62 +243,47 @@ class ClienteTikTok:
         limite: int = 20
     ) -> list[dict]:
         """
-        Extrae metadatos de los videos más populares de un hashtag de TikTok.
-
-        yt-dlp construye la URL de la página del hashtag de TikTok y extrae
-        los metadatos de los videos listados sin descargarlos.
+        Extrae metadatos de los videos más populares de un hashtag de TikTok
+        usando la API gratuita de TikWM como alternativa al extractor de yt-dlp.
 
         Args:
-            hashtag: Nombre del hashtag sin el símbolo # (ej: "memesenespañol").
+            hashtag: Nombre del hashtag sin el símbolo # (ej: "shitpostenespañol").
             limite: Número máximo de videos a extraer del hashtag.
 
         Retorna:
-            list[dict]: Lista de diccionarios con metadatos de cada video.
+            list[dict]: Lista de diccionarios con metadatos de cada video de TikWM.
         """
-        url_hashtag = f"https://www.tiktok.com/tag/{hashtag}"
-        logger.info("🔍 Extrayendo metadatos de #%s...", hashtag)
+        url_api = "https://www.tikwm.com/api/feed/search"
+        termino_busqueda = f"#{hashtag}" if not hashtag.startswith('#') else hashtag
+        logger.info("🔍 Extrayendo metadatos de %s (vía TikWM API)...", termino_busqueda)
 
-        comando = self._construir_argumentos_base() + [
-            "--playlist-items", f"1:{limite}",  # Limitar al número de videos solicitados
-            url_hashtag,
-        ]
+        payload = {
+            "keywords": termino_busqueda,
+            "count": limite,
+            "cursor": 0
+        }
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
 
         try:
-            resultado = subprocess.run(
-                comando,
-                capture_output=True,
-                text=True,
-                timeout=120,
-                encoding="utf-8",
-            )
+            resp = requests.post(url_api, data=payload, headers=headers, timeout=30)
+            if resp.status_code != 200:
+                logger.warning("⚠️  Error HTTP %d al consultar TikWM para %s", resp.status_code, termino_busqueda)
+                return []
+                
+            datos = resp.json()
+            if datos.get("code") == 0 and "data" in datos:
+                videos = datos["data"].get("videos", [])
+                logger.info("   → Encontrados %d videos en %s", len(videos), termino_busqueda)
+                return videos
+            else:
+                logger.warning("⚠️  Respuesta fallida de TikWM para %s: %s", termino_busqueda, datos.get("msg", "sin mensaje"))
+                return []
 
-            if resultado.returncode != 0 and resultado.returncode != 1:
-                # returncode=1 a veces es advertencias no fatales en yt-dlp
-                logger.warning(
-                    "⚠️  yt-dlp retornó código %d para #%s",
-                    resultado.returncode, hashtag
-                )
-
-            # Parsear líneas JSON individuales (yt-dlp --dump-json emite una por video)
-            videos = []
-            for linea in resultado.stdout.strip().split("\n"):
-                linea = linea.strip()
-                if not linea:
-                    continue
-                try:
-                    video = json.loads(linea)
-                    videos.append(video)
-                except json.JSONDecodeError:
-                    continue  # Ignorar líneas que no sean JSON válido
-
-            logger.info("   → Encontrados %d videos en #%s", len(videos), hashtag)
-            return videos
-
-        except subprocess.TimeoutExpired:
-            logger.warning("⚠️  Timeout al extraer #%s. Continuando con el siguiente.", hashtag)
-            return []
         except Exception as e:
-            logger.warning("⚠️  Error inesperado en #%s: %s", hashtag, e)
+            logger.warning("⚠️  Error al consultar TikWM para %s: %s", termino_busqueda, e)
             return []
 
     def descargar_video_sin_watermark(
@@ -399,6 +391,40 @@ def normalizar_metadatos_ytdlp(video_raw: dict) -> dict:
     }
 
 
+def normalizar_metadatos_tikwm(video_raw: dict) -> dict:
+    """
+    Normaliza los metadatos retornados por la API de TikWM al formato esperado por el sistema.
+    """
+    video_id = video_raw.get("video_id", "")
+    author_unique_id = video_raw.get("author", {}).get("unique_id", "")
+    
+    # Construimos la URL canónica de TikTok
+    webpage_url = f"https://www.tiktok.com/@{author_unique_id}/video/{video_id}" if video_id and author_unique_id else ""
+    
+    return {
+        # Identificadores
+        "id": video_id,
+        "webpage_url": webpage_url,
+
+        # Métricas de engagement
+        "view_count":    int(video_raw.get("play_count", 0) or 0),
+        "like_count":    int(video_raw.get("digg_count", 0) or 0),
+        "comment_count": int(video_raw.get("comment_count", 0) or 0),
+        "share_count":   int(video_raw.get("share_count", 0) or 0),
+
+        # Temporal (create_time es unix timestamp en segundos)
+        "timestamp": int(video_raw.get("create_time", 0) or 0),
+
+        # Contenido
+        "duration":     float(video_raw.get("duration", 0) or 0),
+        "description":  video_raw.get("title", ""),
+        "uploader":     author_unique_id,
+
+        # Conservar datos originales para referencia
+        "_raw": video_raw,
+    }
+
+
 def calcular_puntuacion_viral(video: dict) -> float:
     """
     Calcula la Puntuación Viral (Viral Score) de un video de TikTok.
@@ -484,7 +510,7 @@ def es_video_valido(video: dict) -> bool:
 
 def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
     """
-    Busca en todos los hashtags configurados y selecciona el TOP N de videos.
+    Busca en todas las cuentas configuradas y selecciona el TOP N de videos.
 
     Args:
         cliente: Instancia del cliente de TikTok (basado en yt-dlp).
@@ -499,7 +525,7 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
         videos_raw = cliente.obtener_videos_por_hashtag(hashtag, limite=20)
 
         for video_raw in videos_raw:
-            video = normalizar_metadatos_ytdlp(video_raw)
+            video = normalizar_metadatos_tikwm(video_raw)
             video_id = video.get("id", "")
 
             if not video_id or video_id in ids_vistos:
