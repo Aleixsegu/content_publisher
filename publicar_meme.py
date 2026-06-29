@@ -59,6 +59,7 @@ import math
 import random
 import logging
 import hashlib
+import re
 import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -88,16 +89,18 @@ logger = logging.getLogger(__name__)
 # Búsquedas de palabras clave para encontrar memes de España (en orden de prioridad)
 BUSQUEDAS_OBJETIVO = [
     "meme españa",
-    "memes españa",
     "meme español",
-    "humor españa",
-    "memes españoles",
-    "meme spain",
 ]
 
 # Región objetivo para filtrar resultados
 REGION_OBJETIVO = {"ES"}
 
+# Al menos uno de estos términos debe aparecer en la descripción del vídeo.
+# Garantiza que el contenido sea efectivamente un meme o humor, y no un vídeo
+# cualquiera que solo mencione "españa" junto a la palabra meme de pasada.
+TAGS_MEME_REQUERIDOS = {
+    "meme", "memes", "humor", "gracioso", "momazo", "shitpost",
+}
 
 # Número de videos a seleccionar para publicación
 TOP_N_VIDEOS = 5
@@ -544,6 +547,15 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
             if not (5 <= video.get("duration", 0) <= 90):
                 continue
 
+            # Filtro de contenido: la descripción debe contener al menos un hashtag
+            # de meme/humor EXACTO (ej: #meme sí, #memesespaña no).
+            desc = v_raw.get("title", "").lower()
+            # Extraemos los tokens del texto separando por cualquier carácter no alfanumérico
+            # (excepto #) para obtener palabras como "#meme" sin trailing punctuation.
+            tokens = set(re.sub(r"[^\w#]", " ", desc).split())
+            if not any(f"#{tag}" in tokens for tag in TAGS_MEME_REQUERIDOS):
+                continue
+
             ids_vistos.add(video_id)
             video["region"] = region
             video["_busqueda_origen"] = keywords
@@ -567,13 +579,14 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
     for i, v in enumerate(seleccionados, 1):
         horas = (ahora_log - v.get("timestamp", 0)) / 3600
         logger.info(
-            "   %d. VS=%.2f | Vistas=%d | Likes=%d | Compartidos=%d | Edad=%.1fh | @%s | %s",
+            "   %d. VS=%.2f | Vistas=%d | Likes=%d | Compartidos=%d | Edad=%.1fh | busq='%s' | @%s | %s",
             i,
             v["_puntuacion_viral"],
             v["view_count"],
             v["like_count"],
             v["share_count"],
             horas,
+            v.get("_busqueda_origen", "?"),
             v["uploader"],
             v["webpage_url"],
         )
