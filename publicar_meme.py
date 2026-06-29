@@ -85,15 +85,21 @@ logger = logging.getLogger(__name__)
 # CONSTANTES Y CONFIGURACIÓN GLOBAL
 # ---------------------------------------------------------------------------
 
-# Hashtags objetivo en TikTok (humor en español faceless)
-HASHTAGS_OBJETIVO = [
-    "shitpostenespañol",
-    "memesenespañol",
-    "memesespaña",
-    "shitpostespañol",
-    "memesespañoles",
-    "humorspain",
+# Búsquedas de palabras clave para encontrar memes de España (en orden de prioridad)
+BUSQUEDAS_OBJETIVO = [
+    "meme españa",
+    "memes españa",
+    "meme español",
+    "humor españa",
+    "memes españoles",
+    "meme spain",
 ]
+
+# Región objetivo para filtrar resultados
+REGION_OBJETIVO = {"ES"}
+
+# Candidatos mínimos a recopilar antes de elegir el TOP N
+MINIMO_CANDIDATOS = 10
 
 # Número de videos a seleccionar para publicación
 TOP_N_VIDEOS = 5
@@ -237,54 +243,62 @@ class ClienteTikTok:
 
         return args
 
-    def obtener_videos_por_hashtag(
+    def buscar_videos_por_keywords(
         self,
-        hashtag: str,
-        limite: int = 20
+        keywords: str,
+        max_paginas: int = 10,
+        publish_time: int = 1
     ) -> list[dict]:
         """
-        Extrae metadatos de los videos más populares de un hashtag de TikTok
-        usando la API gratuita de TikWM como alternativa al extractor de yt-dlp.
+        Busca vídeos en TikTok usando palabras clave (ej: "meme españa") paginando
+        hasta max_paginas páginas de resultados.
 
         Args:
-            hashtag: Nombre del hashtag sin el símbolo # (ej: "shitpostenespañol").
-            limite: Número máximo de videos a extraer del hashtag.
+            keywords: Términos de búsqueda (ej: "meme españa").
+            max_paginas: Número máximo de páginas a consultar (30 vídeos/página).
+            publish_time: Ventana de tiempo de la API (1=últimas 24h, 7=última semana).
 
         Retorna:
-            list[dict]: Lista de diccionarios con metadatos de cada video de TikWM.
+            list[dict]: Lista de metadatos crudos de TikWM.
         """
         url_api = "https://www.tikwm.com/api/feed/search"
-        termino_busqueda = f"#{hashtag}" if not hashtag.startswith('#') else hashtag
-        logger.info("🔍 Extrayendo metadatos de %s (vía TikWM API)...", termino_busqueda)
-
-        payload = {
-            "keywords": termino_busqueda,
-            "count": limite,
-            "cursor": 0
-        }
-        
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
+        logger.info("🔍 Buscando: '%s' (hasta %d páginas)...", keywords, max_paginas)
 
-        try:
-            resp = requests.post(url_api, data=payload, headers=headers, timeout=30)
-            if resp.status_code != 200:
-                logger.warning("⚠️  Error HTTP %d al consultar TikWM para %s", resp.status_code, termino_busqueda)
-                return []
-                
-            datos = resp.json()
-            if datos.get("code") == 0 and "data" in datos:
-                videos = datos["data"].get("videos", [])
-                logger.info("   → Encontrados %d videos en %s", len(videos), termino_busqueda)
-                return videos
-            else:
-                logger.warning("⚠️  Respuesta fallida de TikWM para %s: %s", termino_busqueda, datos.get("msg", "sin mensaje"))
-                return []
+        todos = []
+        cursor = 0
+        for pagina in range(max_paginas):
+            payload = {
+                "keywords": keywords,
+                "count": 30,
+                "cursor": cursor,
+                "publish_time": publish_time,
+            }
+            try:
+                resp = requests.post(url_api, data=payload, headers=headers, timeout=20)
+                if resp.status_code != 200:
+                    break
+                datos = resp.json()
+                if datos.get("code") == 0 and "data" in datos:
+                    videos = datos["data"].get("videos", [])
+                    todos.extend(videos)
+                    has_more = datos["data"].get("hasMore")
+                    next_cursor = datos["data"].get("cursor")
+                    if not has_more or not next_cursor or next_cursor == cursor:
+                        break
+                    cursor = next_cursor
+                else:
+                    break
+            except Exception as e:
+                logger.debug("Error buscando '%s' pág %d: %s", keywords, pagina + 1, e)
+                break
+            time.sleep(1)
 
-        except Exception as e:
-            logger.warning("⚠️  Error al consultar TikWM para %s: %s", termino_busqueda, e)
-            return []
+        logger.info("   → %d vídeos obtenidos para '%s'", len(todos), keywords)
+        return todos
 
     def descargar_video_sin_watermark(
         self,
@@ -402,75 +416,52 @@ def normalizar_metadatos_tikwm(video_raw: dict) -> dict:
     webpage_url = f"https://www.tiktok.com/@{author_unique_id}/video/{video_id}" if video_id and author_unique_id else ""
     
     return {
-        # Identificadores
         "id": video_id,
         "webpage_url": webpage_url,
-
-        # Métricas de engagement
         "view_count":    int(video_raw.get("play_count", 0) or 0),
         "like_count":    int(video_raw.get("digg_count", 0) or 0),
         "comment_count": int(video_raw.get("comment_count", 0) or 0),
         "share_count":   int(video_raw.get("share_count", 0) or 0),
-
-        # Temporal (create_time es unix timestamp en segundos)
         "timestamp": int(video_raw.get("create_time", 0) or 0),
-
-        # Contenido
         "duration":     float(video_raw.get("duration", 0) or 0),
         "description":  video_raw.get("title", ""),
         "uploader":     author_unique_id,
-
-        # Conservar datos originales para referencia
         "_raw": video_raw,
     }
 
 
 def calcular_puntuacion_viral(video: dict) -> float:
-    """
-    Calcula la Puntuación Viral (Viral Score) de un video de TikTok.
+    """Calcula la Puntuacion Viral ponderando compartidos, likes, comentarios y vistas.
 
-    Fórmula ponderada con escala logarítmica para evitar que el volumen
-    puro dominie sobre el engagement de calidad:
-
-        VS = log10(vistas + 1)      × 40   ← Alcance/difusión
-           + log10(likes + 1)       × 35   ← Aprobación activa
-           + log10(comentarios + 1) × 25   ← Engagement profundo
-           + bonus_recencia                ← Frescura del contenido (0-10 pts)
-
-    Ejemplo:
-        Video A: 500K vistas, 30K likes, 800 comentarios, 3h → VS ≈ 108.4
-        Video B: 2M vistas,  10K likes, 200 comentarios, 20h → VS ≈ 102.1
-        → Video A gana por mejor ratio de engagement y mayor frescura.
-
-    Args:
-        video: Metadatos normalizados del video.
-
-    Retorna:
-        float: Puntuación viral calculada (rango típico: 40 a 135).
+    VS = log10(vistas+1)*30 + log10(likes+1)*25 + log10(compartidos+1)*25
+       + log10(comentarios+1)*15 + ratio_engagement*5 + bonus_recencia(0-5)
     """
     vistas      = video.get("view_count", 0)
     likes       = video.get("like_count", 0)
     comentarios = video.get("comment_count", 0)
+    compartidos = video.get("share_count", 0)
 
-    # Puntuaciones base con escala logarítmica
-    pts_vistas      = math.log10(vistas + 1) * 40
-    pts_likes       = math.log10(likes + 1) * 35
-    pts_comentarios = math.log10(comentarios + 1) * 25
+    pts_vistas      = math.log10(vistas + 1) * 30
+    pts_likes       = math.log10(likes + 1) * 25
+    pts_compartidos = math.log10(compartidos + 1) * 25
+    pts_comentarios = math.log10(comentarios + 1) * 15
 
-    # Bonus de recencia según la edad del video
+    ratio = (likes + compartidos) / max(vistas, 1)
+    pts_ratio = min(ratio * 50, 5.0)
+
     ahora = int(datetime.now(ZONA_HORARIA_UTC).timestamp())
-    horas_transcurridas = (ahora - video.get("timestamp", 0)) / 3600
-
-    if horas_transcurridas <= 6:
-        bonus_recencia = 10.0
-    elif horas_transcurridas <= 12:
-        bonus_recencia = 6.0
-    elif horas_transcurridas <= 24:
-        bonus_recencia = 2.0
+    horas = (ahora - video.get("timestamp", 0)) / 3600
+    if horas <= 6:
+        bonus_recencia = 5.0
+    elif horas <= 12:
+        bonus_recencia = 3.0
+    elif horas <= 24:
+        bonus_recencia = 1.0
     else:
         bonus_recencia = 0.0
 
-    return round(pts_vistas + pts_likes + pts_comentarios + bonus_recencia, 4)
+    return round(pts_vistas + pts_likes + pts_compartidos + pts_comentarios + pts_ratio + bonus_recencia, 4)
+
 
 
 def es_video_valido(video: dict) -> bool:
@@ -510,56 +501,91 @@ def es_video_valido(video: dict) -> bool:
 
 def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
     """
-    Busca en todas las cuentas configuradas y selecciona el TOP N de videos.
+    Busca vídeos de memes de España usando palabras clave ("meme españa", etc.),
+    paginando cada búsqueda hasta acumular MINIMO_CANDIDATOS vídeos válidos de
+    la región objetivo publicados en las últimas 24 horas.
+
+    Criterios de validez:
+    - Región: ES (España)
+    - Antigüedad: < 24 horas
+    - Duración: entre 5 y 90 segundos
+
+    Selección final: TOP_N_VIDEOS ordenados por puntuación viral.
 
     Args:
-        cliente: Instancia del cliente de TikTok (basado en yt-dlp).
+        cliente: Instancia del cliente de TikTok.
 
     Retorna:
         list[dict]: TOP_N_VIDEOS videos ordenados por puntuación viral descendente.
     """
-    todos_los_videos = []
+    ahora = int(datetime.now(ZONA_HORARIA_UTC).timestamp())
+    candidatos = []
     ids_vistos = set()
 
-    for hashtag in HASHTAGS_OBJETIVO:
-        videos_raw = cliente.obtener_videos_por_hashtag(hashtag, limite=20)
+    for keywords in BUSQUEDAS_OBJETIVO:
+        # Parar si ya tenemos suficientes candidatos
+        if len(candidatos) >= MINIMO_CANDIDATOS:
+            logger.info(
+                "🎯 Muestra suficiente (%d candidatos). Deteniendo búsqueda.",
+                len(candidatos)
+            )
+            break
 
-        for video_raw in videos_raw:
-            video = normalizar_metadatos_tikwm(video_raw)
+        videos_raw = cliente.buscar_videos_por_keywords(keywords, max_paginas=10, publish_time=1)
+
+        for v_raw in videos_raw:
+            video = normalizar_metadatos_tikwm(v_raw)
             video_id = video.get("id", "")
 
             if not video_id or video_id in ids_vistos:
                 continue
-            if not es_video_valido(video):
+
+            # Filtro de región
+            region = v_raw.get("region", "").upper()
+            if region not in REGION_OBJETIVO:
+                continue
+
+            # Filtro de antigüedad: últimas 24h
+            horas = (ahora - video.get("timestamp", 0)) / 3600
+            if horas > 24.0:
+                continue
+
+            # Filtro de duración: 5 – 90 segundos
+            if not (5 <= video.get("duration", 0) <= 90):
                 continue
 
             ids_vistos.add(video_id)
+            video["region"] = region
+            video["_busqueda_origen"] = keywords
             video["_puntuacion_viral"] = calcular_puntuacion_viral(video)
-            video["_hashtag_origen"] = hashtag
-            todos_los_videos.append(video)
+            candidatos.append(video)
 
-        time.sleep(2)  # Pausa entre hashtags para respetar rate limits
+        time.sleep(1.5)
 
-    if not todos_los_videos:
-        logger.error("❌ No se encontraron videos válidos en ningún hashtag.")
-        sys.exit(1)
+    if not candidatos:
+        logger.warning("⚠️ No se encontraron vídeos de España en las últimas 24h. Fin limpio.")
+        return []
 
-    todos_los_videos.sort(key=lambda v: v["_puntuacion_viral"], reverse=True)
-    seleccionados = todos_los_videos[:TOP_N_VIDEOS]
+    candidatos.sort(key=lambda v: v["_puntuacion_viral"], reverse=True)
+    seleccionados = candidatos[:TOP_N_VIDEOS]
 
+    ahora_log = int(datetime.now(ZONA_HORARIA_UTC).timestamp())
     logger.info(
         "\n🏆 TOP %d seleccionados de %d candidatos:",
-        len(seleccionados), len(todos_los_videos)
+        len(seleccionados), len(candidatos)
     )
     for i, v in enumerate(seleccionados, 1):
+        horas = (ahora_log - v.get("timestamp", 0)) / 3600
         logger.info(
-            "   %d. VS=%.2f | Vistas=%d | Likes=%d | #%s | %s",
+            "   %d. VS=%.2f | Vistas=%d | Likes=%d | Compartidos=%d | Edad=%.1fh | @%s | %s",
             i,
             v["_puntuacion_viral"],
             v["view_count"],
             v["like_count"],
-            v["_hashtag_origen"],
-            v["webpage_url"][:60],
+            v["share_count"],
+            horas,
+            v["uploader"],
+            v["webpage_url"],
         )
 
     return seleccionados
