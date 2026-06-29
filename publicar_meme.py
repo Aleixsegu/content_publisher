@@ -1282,7 +1282,7 @@ def main():
         # ── Reel inmediato: Video #1 (mejor puntuación viral) ────────────
         video_reel = videos_procesados[0]
         ruta_reel  = video_reel["_ruta_local"]
-        caption    = generar_caption_reel(video_reel)
+        caption    = ""  # Reel subido sin descripción/caption
 
         media_id_reel = cliente_meta.publicar_reel_desde_archivo(ruta_reel, caption)
 
