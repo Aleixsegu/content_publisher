@@ -98,8 +98,6 @@ BUSQUEDAS_OBJETIVO = [
 # Región objetivo para filtrar resultados
 REGION_OBJETIVO = {"ES"}
 
-# Candidatos mínimos a recopilar antes de elegir el TOP N
-MINIMO_CANDIDATOS = 10
 
 # Número de videos a seleccionar para publicación
 TOP_N_VIDEOS = 5
@@ -502,8 +500,8 @@ def es_video_valido(video: dict) -> bool:
 def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
     """
     Busca vídeos de memes de España usando palabras clave ("meme españa", etc.),
-    paginando cada búsqueda hasta acumular MINIMO_CANDIDATOS vídeos válidos de
-    la región objetivo publicados en las últimas 24 horas.
+    recorriendo todas las búsquedas configuradas y recopilando todos los candidatos
+    válidos posibles para maximizar la muestra y elegir el mejor TOP N.
 
     Criterios de validez:
     - Región: ES (España)
@@ -523,14 +521,6 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
     ids_vistos = set()
 
     for keywords in BUSQUEDAS_OBJETIVO:
-        # Parar si ya tenemos suficientes candidatos
-        if len(candidatos) >= MINIMO_CANDIDATOS:
-            logger.info(
-                "🎯 Muestra suficiente (%d candidatos). Deteniendo búsqueda.",
-                len(candidatos)
-            )
-            break
-
         videos_raw = cliente.buscar_videos_por_keywords(keywords, max_paginas=10, publish_time=1)
 
         for v_raw in videos_raw:
