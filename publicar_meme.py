@@ -90,10 +90,20 @@ logger = logging.getLogger(__name__)
 BUSQUEDAS_OBJETIVO = [
     "meme españa",
     "meme español",
+    "meme",
+    "memes",
+    "memes mundial",
+    "shitpost españa",
+    "shitpost español",
+    "memes xokas",
+    "memes chiringuito",
 ]
 
 # Región objetivo para filtrar resultados
 REGION_OBJETIVO = {"ES"}
+
+# Cuentas de TikTok excluidas (no se seleccionarán sus videos)
+CUENTAS_EXCLUIDAS = {"failets", "lobostroy"}
 
 # Al menos uno de estos términos debe aparecer en la descripción del vídeo.
 # Garantiza que el contenido sea efectivamente un meme o humor, y no un vídeo
@@ -536,6 +546,11 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
             # Filtro de región
             region = v_raw.get("region", "").upper()
             if region not in REGION_OBJETIVO:
+                continue
+
+            # Filtro de cuentas excluidas (evitar contenido no deseado)
+            uploader = video.get("uploader", "").lower()
+            if uploader in CUENTAS_EXCLUIDAS:
                 continue
 
             # Filtro de antigüedad: últimas 24h
@@ -1170,6 +1185,40 @@ class SubidaResumibleMeta:
             logger.info("   ✅ Story %d publicada. ID: %s", indice, media_id)
         return media_id
 
+    def verificar_publicacion_reciente(self, horas_umbral: float = 12.0) -> bool:
+        """
+        Verifica si se ha publicado algún contenido en las últimas 'horas_umbral' en Instagram.
+        Evita duplicaciones por ejecuciones crón solapadas.
+        """
+        logger.info("🔍 Comprobando si existen publicaciones recientes en Instagram...")
+        resp = self._graph_get(f"/{self.account_id}/media", {"fields": "timestamp,media_type", "limit": "5"})
+        if not resp or "data" not in resp:
+            logger.info("   → No se pudieron recuperar las publicaciones o no existen.")
+            return False
+
+        ahora = datetime.now(timezone.utc)
+        for media in resp["data"]:
+            ts_str = media.get("timestamp")
+            if not ts_str:
+                continue
+            try:
+                ts_str_clean = ts_str.replace("+0000", "+00:00")
+                ts_pub = datetime.fromisoformat(ts_str_clean)
+                
+                diferencia_horas = (ahora - ts_pub).total_seconds() / 3600.0
+                if 0 <= diferencia_horas < horas_umbral:
+                    logger.warning(
+                        "   ⚠️ PUBLICACIÓN DETECTADA: Post publicado hace %.1f horas (ID: %s, Tipo: %s).",
+                        diferencia_horas, media.get("id"), media.get("media_type")
+                    )
+                    return True
+            except Exception as e:
+                logger.warning("   ⚠️ Error al parsear timestamp '%s': %s", ts_str, e)
+                continue
+
+        logger.info("   ✅ Sin publicaciones en las últimas %.1f horas.", horas_umbral)
+        return False
+
 
 # ---------------------------------------------------------------------------
 # MÓDULO 4: GENERACIÓN DE CAPTIONS Y HASHTAGS
@@ -1212,6 +1261,26 @@ def generar_caption_reel(video: dict) -> str:
     return f"{intro}\n\n{texto_hashtags}"
 
 
+def comprobar_horario_madrid() -> bool:
+    """
+    Comprueba si la ejecución actual corresponde al horario de publicación correcto (18:00 Madrid).
+    Omitirá el primer cron (16:00 UTC) en invierno, ya que debe publicarse a las 17:00 UTC (18:00 Madrid).
+    """
+    import pytz
+    tz_madrid = pytz.timezone("Europe/Madrid")
+    ahora_madrid = datetime.now(tz_madrid)
+    
+    # Determinar si DST (Daylight Saving Time) está activo en Madrid
+    es_verano = ahora_madrid.dst().total_seconds() > 0
+    
+    # En invierno (CET), el run de las 16:00 UTC (17:00 Madrid) debe omitirse
+    if not es_verano and ahora_madrid.hour < 18:
+        logger.info("   ⚠️ Omitiendo ejecución: en invierno (CET) se publica a las 17:00 UTC (18:00 Madrid). Hora actual: %s", ahora_madrid.strftime("%H:%M"))
+        return False
+        
+    return True
+
+
 # ---------------------------------------------------------------------------
 # FUNCIÓN PRINCIPAL: ORQUESTADOR DEL FLUJO COMPLETO
 # ---------------------------------------------------------------------------
@@ -1235,6 +1304,25 @@ def main():
 
     # ── FASE 0: Credenciales ─────────────────────────────────────────────
     credenciales = cargar_credenciales()
+
+    # ── FASE 0.5: Comprobaciones de duplicidad y horario ──────────────────
+    solo_descubrir = os.environ.get("SOLO_DESCUBRIR", "false").lower() == "true"
+    ejecucion_manual = os.environ.get("EJECUCION_MANUAL", "false").lower() == "true"
+
+    if not solo_descubrir and not ejecucion_manual:
+        # 1. Comprobar si el cron corresponde al horario de Madrid (18:00)
+        if not comprobar_horario_madrid():
+            logger.info("🛑 Cancelando ejecución para respetar el horario de Madrid. ¡Hasta luego!")
+            sys.exit(0)
+
+        # 2. Comprobar si ya se ha publicado algo en las últimas 12 horas en Instagram
+        cliente_meta = SubidaResumibleMeta(
+            access_token=credenciales["META_ACCESS_TOKEN"],
+            instagram_account_id=credenciales["INSTAGRAM_ACCOUNT_ID"],
+        )
+        if cliente_meta.verificar_publicacion_reciente(horas_umbral=12.0):
+            logger.info("🛑 Cancelando ejecución para evitar duplicaciones. ¡Hasta mañana!")
+            sys.exit(0)
 
     # ── FASE 1: Descubrimiento en TikTok ─────────────────────────────────
     logger.info("\n📡 FASE 1: Descubrimiento de videos en TikTok (via yt-dlp)")
