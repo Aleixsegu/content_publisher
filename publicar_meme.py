@@ -90,20 +90,24 @@ logger = logging.getLogger(__name__)
 BUSQUEDAS_OBJETIVO = [
     "meme españa",
     "meme español",
-    "meme",
-    "memes",
-    "memes mundial",
     "shitpost españa",
     "shitpost español",
+    "meme",
+    "memes",
+    "shitpost",
+    "memes mundial",
     "memes xokas",
     "memes chiringuito",
+    "memes futbol",
+    "memes pereira",
 ]
 
 # Región objetivo para filtrar resultados
 REGION_OBJETIVO = {"ES"}
 
 # Cuentas de TikTok excluidas (no se seleccionarán sus videos)
-CUENTAS_EXCLUIDAS = {"failets", "lobostroy"}
+CUENTAS_EXCLUIDAS = {"failets", "lobostroy", "el.borov.memes", "vristok", "always.hansineta", "ekaitz.rguezz", "papigavitv", "presentacionazas",
+                     "joseeppardo"}
 
 # Al menos uno de estos términos debe aparecer en la descripción del vídeo.
 # Garantiza que el contenido sea efectivamente un meme o humor, y no un vídeo
