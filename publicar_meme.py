@@ -107,7 +107,7 @@ REGION_OBJETIVO = {"ES"}
 
 # Cuentas de TikTok excluidas (no se seleccionarán sus videos)
 CUENTAS_EXCLUIDAS = {"failets", "lobostroy", "el.borov.memes", "vristok", "always.hansineta", "ekaitz.rguezz", "papigavitv", "presentacionazas",
-                     "joseeppardo"}
+                     "joseeppardo", "cowboystroys", "malagacf"}
 
 # Al menos uno de estos términos debe aparecer en la descripción del vídeo.
 # Garantiza que el contenido sea efectivamente un meme o humor, y no un vídeo
@@ -1267,8 +1267,8 @@ def generar_caption_reel(video: dict) -> str:
 
 def comprobar_horario_madrid() -> bool:
     """
-    Comprueba si la ejecución actual corresponde al horario de publicación correcto (18:00 Madrid).
-    Omitirá el primer cron (16:00 UTC) en invierno, ya que debe publicarse a las 17:00 UTC (18:00 Madrid).
+    Comprueba si la ejecución actual corresponde al horario de publicación correcto (17:00 Madrid).
+    Omitirá el primer cron (15:00 UTC) en invierno, ya que debe publicarse a las 16:00 UTC (17:00 Madrid).
     """
     import pytz
     tz_madrid = pytz.timezone("Europe/Madrid")
@@ -1277,9 +1277,9 @@ def comprobar_horario_madrid() -> bool:
     # Determinar si DST (Daylight Saving Time) está activo en Madrid
     es_verano = ahora_madrid.dst().total_seconds() > 0
     
-    # En invierno (CET), el run de las 16:00 UTC (17:00 Madrid) debe omitirse
-    if not es_verano and ahora_madrid.hour < 18:
-        logger.info("   ⚠️ Omitiendo ejecución: en invierno (CET) se publica a las 17:00 UTC (18:00 Madrid). Hora actual: %s", ahora_madrid.strftime("%H:%M"))
+    # En invierno (CET), el run de las 15:00 UTC (16:00 Madrid) debe omitirse
+    if not es_verano and ahora_madrid.hour < 17:
+        logger.info("   ⚠️ Omitiendo ejecución: en invierno (CET) se publica a las 16:00 UTC (17:00 Madrid). Hora actual: %s", ahora_madrid.strftime("%H:%M"))
         return False
         
     return True

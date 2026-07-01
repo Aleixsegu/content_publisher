@@ -9,11 +9,11 @@
 #   • Meta rupload → Subida binaria directa a Meta (sin hosting externo)
 #   • Meta Graph API → Publicación en Instagram Reels y Stories
 #
-# PROGRAMACIÓN (18:00 hora de Madrid):
+# PROGRAMACIÓN (17:00 hora de Madrid):
 #   España usa CET (UTC+1) en invierno y CEST (UTC+2) en verano.
 #   Se definen DOS expresiones cron para cubrir ambos horarios:
-#     • 0 16 * * * → Verano CEST (UTC+2): 16:00 UTC = 18:00 Madrid
-#     • 0 17 * * * → Invierno CET (UTC+1): 17:00 UTC = 18:00 Madrid
+#     • 0 15 * * * → Verano CEST (UTC+2): 15:00 UTC = 17:00 Madrid
+#     • 0 16 * * * → Invierno CET (UTC+1): 16:00 UTC = 17:00 Madrid
 #
 # SECRETOS REQUERIDOS (GitHub → Settings → Secrets → Actions):
 #   META_ACCESS_TOKEN      Token de larga duración de Meta Graph API (60 días)
@@ -30,10 +30,10 @@ name: "🤖 Publicar Contenido Diario — TikTok → Instagram"
 
 on:
   schedule:
-    # Horario VERANO (CEST, UTC+2): 16:00 UTC = 18:00 Madrid
+    # Horario VERANO (CEST, UTC+2): 15:00 UTC = 17:00 Madrid
+    - cron: "0 15 * * *"
+    # Horario INVIERNO (CET, UTC+1): 16:00 UTC = 17:00 Madrid
     - cron: "0 16 * * *"
-    # Horario INVIERNO (CET, UTC+1): 17:00 UTC = 18:00 Madrid
-    - cron: "0 17 * * *"
 
   # Ejecución manual desde la interfaz de GitHub (ideal para pruebas)
   workflow_dispatch:
