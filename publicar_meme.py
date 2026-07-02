@@ -107,7 +107,8 @@ REGION_OBJETIVO = {"ES"}
 
 # Cuentas de TikTok excluidas (no se seleccionarán sus videos)
 CUENTAS_EXCLUIDAS = {"failets", "lobostroy", "el.borov.memes", "vristok", "always.hansineta", "ekaitz.rguezz", "papigavitv", "presentacionazas",
-                     "joseeppardo", "cowboystroys", "malagacf"}
+                     "joseeppardo", "cowboystroys", "malagacf", "skormemes", "mastuerzosfamily", "mipollanegra8", "sergi0_el_saludos", "keikogol",
+                     "laultimacroqueta", "skormemes"}
 
 # Al menos uno de estos términos debe aparecer en la descripción del vídeo.
 # Garantiza que el contenido sea efectivamente un meme o humor, y no un vídeo
@@ -126,10 +127,9 @@ ALTO_VIDEO = 1920
 # Ventana de tiempo para considerar videos "recientes"
 HORAS_MAXIMO_ANTIGUEDAD = 24
 
-# Intervalo entre publicaciones de Stories: ajustado a 75 minutos (4500s)
-# para distribuir las 4 Stories a lo largo de las 5 horas (300 min) de duración máxima
-# segura de la sesión de GitHub Actions (timeout-minutes configurado en 330 min).
-INTERVALO_STORIES_SEGUNDOS = 75 * 60
+# Intervalo entre publicaciones de Stories: ajustado a 70 minutos (4200s)
+# para distribuir las 4 Stories a lo largo de las 4.6 horas (280 min) de duración.
+INTERVALO_STORIES_SEGUNDOS = 70 * 60
 
 # Tiempo máximo de espera para que el contenedor de Meta esté listo
 TIMEOUT_CONTENEDOR_META = 300   # 5 minutos
@@ -1268,7 +1268,8 @@ def generar_caption_reel(video: dict) -> str:
 def comprobar_horario_madrid() -> bool:
     """
     Comprueba si la ejecución actual corresponde al horario de publicación correcto (16:00 Madrid).
-    Omitirá el primer cron (14:00 UTC) en invierno, ya que debe publicarse a las 15:00 UTC (16:00 Madrid).
+    Si es invierno (CET) y el cron único se dispara a las 15:00 Madrid (14:00 UTC), el script
+    calcula los segundos restantes y se dormirá (aproximadamente 1 hora) hasta las 16:00 Madrid.
     """
     import pytz
     tz_madrid = pytz.timezone("Europe/Madrid")
@@ -1277,11 +1278,22 @@ def comprobar_horario_madrid() -> bool:
     # Determinar si DST (Daylight Saving Time) está activo en Madrid
     es_verano = ahora_madrid.dst().total_seconds() > 0
     
-    # En invierno (CET), el run de las 14:00 UTC (15:00 Madrid) debe omitirse
+    # En invierno (CET), si iniciamos antes de las 16:00 Madrid (ej: a las 15:00), dormimos
     if not es_verano and ahora_madrid.hour < 16:
-        logger.info("   ⚠️ Omitiendo ejecución: en invierno (CET) se publica a las 15:00 UTC (16:00 Madrid). Hora actual: %s", ahora_madrid.strftime("%H:%M"))
-        return False
+        hora_objetivo = ahora_madrid.replace(hour=16, minute=0, second=0, microsecond=0)
+        segundos_espera = (hora_objetivo - ahora_madrid).total_seconds()
         
+        if segundos_espera > 0:
+            logger.info(
+                "   ❄️ Horario de invierno (CET) detectado. Hora actual: %s.",
+                ahora_madrid.strftime("%H:%M:%S")
+            )
+            logger.info(
+                "   ⏰ Esperando %.1f minutos para iniciar la publicación a las 16:00 Madrid...",
+                segundos_espera / 60
+            )
+            time.sleep(segundos_espera)
+            
     return True
 
 

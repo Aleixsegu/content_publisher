@@ -11,9 +11,9 @@
 #
 # PROGRAMACIÓN (16:00 hora de Madrid):
 #   España usa CET (UTC+1) en invierno y CEST (UTC+2) en verano.
-#   Se definen DOS expresiones cron para cubrir ambos horarios:
-#     • 0 14 * * * → Verano CEST (UTC+2): 14:00 UTC = 16:00 Madrid
-#     • 0 15 * * * → Invierno CET (UTC+1): 15:00 UTC = 16:00 Madrid
+#   Se define un ÚNICO cron a las 14:00 UTC. En invierno (CET, 15:00 Madrid),
+#   el bot dormirá 1 hora de forma automática antes de publicar.
+#     • 0 14 * * * → 14:00 UTC (16:00 Madrid en verano / 15:00 Madrid en invierno)
 #
 # SECRETOS REQUERIDOS (GitHub → Settings → Secrets → Actions):
 #   META_ACCESS_TOKEN      Token de larga duración de Meta Graph API (60 días)
@@ -30,10 +30,8 @@ name: "🤖 Publicar Contenido Diario — TikTok → Instagram"
 
 on:
   schedule:
-    # Horario VERANO (CEST, UTC+2): 14:00 UTC = 16:00 Madrid
+    # Único disparo diario a las 14:00 UTC
     - cron: "0 14 * * *"
-    # Horario INVIERNO (CET, UTC+1): 15:00 UTC = 16:00 Madrid
-    - cron: "0 15 * * *"
 
   # Ejecución manual desde la interfaz de GitHub (ideal para pruebas)
   workflow_dispatch:
@@ -52,7 +50,7 @@ jobs:
   publicar-memes:
     name: "Descubrir → Procesar → Publicar"
     runs-on: ubuntu-24.04
-    timeout-minutes: 330  # 5h 30min máximo (cubre las 4 Stories en 24h)
+    timeout-minutes: 350  # 5h 50min máximo (cubre espera de invierno + 4 Stories)
 
     steps:
       # ── Paso 1: Obtener el código ─────────────────────────────────────
@@ -130,7 +128,7 @@ jobs:
           echo "🤖 Iniciando pipeline..."
           echo "   Run #$GITHUB_RUN_NUMBER (ID: $GITHUB_RUN_ID)"
           echo "   Modo solo diagnóstico: $SOLO_DESCUBRIR"
-          python publicar_meme.py
+          python -u publicar_meme.py
 
       # ── Paso 8: Archivar logs (siempre, incluso si hay error) ────────
       - name: "📋 Archivar logs de ejecución"
