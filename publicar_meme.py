@@ -1267,8 +1267,8 @@ def generar_caption_reel(video: dict) -> str:
 
 def comprobar_horario_madrid() -> bool:
     """
-    Comprueba si la ejecución actual corresponde al horario de publicación correcto (17:00 Madrid).
-    Omitirá el primer cron (15:00 UTC) en invierno, ya que debe publicarse a las 16:00 UTC (17:00 Madrid).
+    Comprueba si la ejecución actual corresponde al horario de publicación correcto (16:00 Madrid).
+    Omitirá el primer cron (14:00 UTC) en invierno, ya que debe publicarse a las 15:00 UTC (16:00 Madrid).
     """
     import pytz
     tz_madrid = pytz.timezone("Europe/Madrid")
@@ -1277,9 +1277,9 @@ def comprobar_horario_madrid() -> bool:
     # Determinar si DST (Daylight Saving Time) está activo en Madrid
     es_verano = ahora_madrid.dst().total_seconds() > 0
     
-    # En invierno (CET), el run de las 15:00 UTC (16:00 Madrid) debe omitirse
-    if not es_verano and ahora_madrid.hour < 17:
-        logger.info("   ⚠️ Omitiendo ejecución: en invierno (CET) se publica a las 16:00 UTC (17:00 Madrid). Hora actual: %s", ahora_madrid.strftime("%H:%M"))
+    # En invierno (CET), el run de las 14:00 UTC (15:00 Madrid) debe omitirse
+    if not es_verano and ahora_madrid.hour < 16:
+        logger.info("   ⚠️ Omitiendo ejecución: en invierno (CET) se publica a las 15:00 UTC (16:00 Madrid). Hora actual: %s", ahora_madrid.strftime("%H:%M"))
         return False
         
     return True
