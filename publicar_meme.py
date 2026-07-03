@@ -108,7 +108,8 @@ REGION_OBJETIVO = {"ES"}
 # Cuentas de TikTok excluidas (no se seleccionarán sus videos)
 CUENTAS_EXCLUIDAS = {"failets", "lobostroy", "el.borov.memes", "vristok", "always.hansineta", "ekaitz.rguezz", "papigavitv", "presentacionazas",
                      "joseeppardo", "cowboystroys", "malagacf", "skormemes", "mastuerzosfamily", "mipollanegra8", "sergi0_el_saludos", "keikogol",
-                     "laultimacroqueta", "skormemes"}
+                     "laultimacroqueta", "skormemes", "danigkman", "rhecky0", "soydelarossa", "wandoy_", "locuras_ia_manu", "hectortilladeajo", 
+                     "any.padillag", "show3201"}
 
 # Al menos uno de estos términos debe aparecer en la descripción del vídeo.
 # Garantiza que el contenido sea efectivamente un meme o humor, y no un vídeo
