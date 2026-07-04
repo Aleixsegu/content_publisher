@@ -1091,6 +1091,7 @@ class SubidaResumibleMeta:
         self,
         ruta_video: Path,
         caption: str = "",
+        max_reintentos: int = 3,
     ) -> Optional[str]:
         """
         Flujo completo para publicar un Reel directamente desde archivo local.
@@ -1107,37 +1108,49 @@ class SubidaResumibleMeta:
         Args:
             ruta_video: Ruta al archivo de video local (MP4 sanitizado).
             caption: Texto del caption del Reel.
+            max_reintentos: Número máximo de intentos.
 
         Retorna:
             str | None: Media ID del Reel publicado.
         """
         logger.info("\n🎬 === PUBLICANDO REEL (subida directa a Meta) ===")
 
-        # Paso 1: Crear contenedor resumible
-        resultado = self.crear_contenedor_resumible("REELS", caption)
-        if not resultado:
-            return None
-        contenedor_id, uri_rupload = resultado
+        for intento in range(1, max_reintentos + 1):
+            if intento > 1:
+                logger.info("   ⏳ Reintentando publicación del Reel (intento %d/%d)...", intento, max_reintentos)
+                time.sleep(15)
 
-        # Paso 2: Subir el binario del video
-        if not self.subir_binario_a_rupload(uri_rupload, ruta_video):
-            return None
+            # Paso 1: Crear contenedor resumible
+            resultado = self.crear_contenedor_resumible("REELS", caption)
+            if not resultado:
+                continue
+            contenedor_id, uri_rupload = resultado
 
-        # Paso 3: Esperar a que Meta procese el video
-        if not self.esperar_contenedor_listo(contenedor_id):
-            return None
+            # Paso 2: Subir el binario del video
+            if not self.subir_binario_a_rupload(uri_rupload, ruta_video):
+                continue
 
-        # Paso 4: Publicar
-        return self.publicar_contenedor(contenedor_id)
+            # Paso 3: Esperar a que Meta procese el video
+            if not self.esperar_contenedor_listo(contenedor_id):
+                continue
+
+            # Paso 4: Publicar
+            media_id = self.publicar_contenedor(contenedor_id)
+            if media_id:
+                return media_id
+
+        logger.error("❌ Fallaron todos los intentos para publicar el Reel.")
+        return None
 
     def publicar_story_desde_archivo(
         self,
         ruta_video: Path,
         tiempo_publicacion: datetime,
         indice: int,
+        max_reintentos: int = 3,
     ) -> Optional[str]:
         """
-        Publica una Story de video desde archivo local, con espera temporal.
+        Publica una Story de video desde archivo local, con espera temporal y reintentos.
 
         La API de Meta Graph NO soporta programación nativa de Stories
         a hora futura (a diferencia de los Reels). Por ello, el sistema
@@ -1150,6 +1163,7 @@ class SubidaResumibleMeta:
             ruta_video: Ruta al video local.
             tiempo_publicacion: Datetime UTC objetivo de publicación.
             indice: Número de Story (1-4) para logging.
+            max_reintentos: Número máximo de intentos.
 
         Retorna:
             str | None: Media ID de la Story publicada.
@@ -1171,25 +1185,33 @@ class SubidaResumibleMeta:
             )
             time.sleep(max(0, segundos_espera))
 
-        # Paso 1: Crear contenedor resumible para Story
-        resultado = self.crear_contenedor_resumible("STORIES")
-        if not resultado:
-            return None
-        contenedor_id, uri_rupload = resultado
+        for intento in range(1, max_reintentos + 1):
+            if intento > 1:
+                logger.info("   ⏳ Reintentando publicación de la Story %d (intento %d/%d)...", indice, intento, max_reintentos)
+                time.sleep(15)
 
-        # Paso 2: Subir binario
-        if not self.subir_binario_a_rupload(uri_rupload, ruta_video):
-            return None
+            # Paso 1: Crear contenedor resumible para Story
+            resultado = self.crear_contenedor_resumible("STORIES")
+            if not resultado:
+                continue
+            contenedor_id, uri_rupload = resultado
 
-        # Paso 3: Esperar procesamiento
-        if not self.esperar_contenedor_listo(contenedor_id):
-            return None
+            # Paso 2: Subir binario
+            if not self.subir_binario_a_rupload(uri_rupload, ruta_video):
+                continue
 
-        # Paso 4: Publicar
-        media_id = self.publicar_contenedor(contenedor_id)
-        if media_id:
-            logger.info("   ✅ Story %d publicada. ID: %s", indice, media_id)
-        return media_id
+            # Paso 3: Esperar procesamiento
+            if not self.esperar_contenedor_listo(contenedor_id):
+                continue
+
+            # Paso 4: Publicar
+            media_id = self.publicar_contenedor(contenedor_id)
+            if media_id:
+                logger.info("   ✅ Story %d publicada. ID: %s", indice, media_id)
+                return media_id
+
+        logger.error("❌ Fallaron todos los intentos para publicar la Story %d.", indice)
+        return None
 
     def verificar_publicacion_reciente(self, horas_umbral: float = 12.0) -> bool:
         """
