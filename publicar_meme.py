@@ -109,7 +109,8 @@ REGION_OBJETIVO = {"ES"}
 CUENTAS_EXCLUIDAS = {"failets", "lobostroy", "el.borov.memes", "vristok", "always.hansineta", "ekaitz.rguezz", "papigavitv", "presentacionazas",
                      "joseeppardo", "cowboystroys", "malagacf", "skormemes", "mastuerzosfamily", "mipollanegra8", "sergi0_el_saludos", "keikogol",
                      "laultimacroqueta", "skormemes", "danigkman", "rhecky0", "soydelarossa", "wandoy_", "locuras_ia_manu", "hectortilladeajo", 
-                     "any.padillag", "show3201"}
+                     "any.padillag", "show3201", "herenciacordobesa_", "donkey_chill", "meme_.oficial", "soytunicho", "your_favorite_spanish",
+                    }
 
 # Al menos uno de estos términos debe aparecer en la descripción del vídeo.
 # Garantiza que el contenido sea efectivamente un meme o humor, y no un vídeo
