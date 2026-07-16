@@ -112,7 +112,8 @@ CUENTAS_EXCLUIDAS = {"failets", "lobostroy", "el.borov.memes", "vristok", "alway
                      "any.padillag", "show3201", "herenciacordobesa_", "donkey_chill", "meme_.oficial", "soytunicho", "your_favorite_spanish",
                      "rmelendi", "spana.papi", "sol.m.t.c", "shortsenaguer", "siaeiros_cdl", "krsiveniz", "itziarcasanova", "ravebg_ai", "paulalamc",
                      "aitor.as", "genpo28", "deadpoolmadrid", "lizi_culer", "blaaugrana_", "7alvaricoke.2_", "danimoraales10", "bailafm", "aiaiai.ai",
-                     "anonimo17213", "elrelatodeportivo", "zellendustreal", "psg", "mismemesymas"}
+                     "anonimo17213", "elrelatodeportivo", "zellendustreal", "psg", "mismemesymas", "bestiblaze_.oficial", "monicahumor86", "teamd8pro",
+                     "thegalaxy966"}
 
 # Al menos uno de estos términos debe aparecer en la descripción del vídeo.
 # Garantiza que el contenido sea efectivamente un meme o humor, y no un vídeo
