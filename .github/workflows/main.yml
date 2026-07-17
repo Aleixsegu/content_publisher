@@ -43,6 +43,12 @@ on:
         type: choice
         options: ["false", "true"]
 
+# Evitar ejecuciones simultáneas: si se inicia una manual y coincide con la programada,
+# la segunda se encolará y esperará a que termine la primera antes de iniciar.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
