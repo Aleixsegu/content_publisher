@@ -95,7 +95,6 @@ BUSQUEDAS_OBJETIVO = [
     "meme",
     "memes",
     "shitpost",
-    "memes mundial",
     "memes xokas",
     "memes chiringuito",
     "memes futbol",
@@ -113,7 +112,7 @@ CUENTAS_EXCLUIDAS = {"failets", "lobostroy", "el.borov.memes", "vristok", "alway
                      "rmelendi", "spana.papi", "sol.m.t.c", "shortsenaguer", "siaeiros_cdl", "krsiveniz", "itziarcasanova", "ravebg_ai", "paulalamc",
                      "aitor.as", "genpo28", "deadpoolmadrid", "lizi_culer", "blaaugrana_", "7alvaricoke.2_", "danimoraales10", "bailafm", "aiaiai.ai",
                      "anonimo17213", "elrelatodeportivo", "zellendustreal", "psg", "mismemesymas", "bestiblaze_.oficial", "monicahumor86", "teamd8pro",
-                     "thegalaxy966", "rdefurbol", "samuelsupongo", "oopsitsmj", "gestnub", "xxbrexx1"}
+                     "thegalaxy966", "rdefurbol", "samuelsupongo", "oopsitsmj", "gestnub", "xxbrexx1", "elpajaroopina"}
 
 # Al menos uno de estos términos debe aparecer en la descripción del vídeo.
 # Garantiza que el contenido sea efectivamente un meme o humor, y no un vídeo
@@ -142,6 +141,10 @@ INTERVALO_POLLING_META = 15     # Verificar cada 15 segundos
 
 # Versión de la API de Meta Graph a utilizar
 META_API_VERSION = "v20.0"
+
+# Si está en True, los Reels se publicarán como "Reel de prueba" (Trial Reel)
+# para que se distribuyan inicialmente solo a no seguidores.
+PUBLICAR_COMO_REEL_DE_PRUEBA = True
 
 # Host para subida de videos directa a Meta
 META_RUPLOAD_HOST = "https://rupload.facebook.com"
@@ -931,9 +934,14 @@ class SubidaResumibleMeta:
             "upload_type": "resumable",
         }
 
-        if media_type == "REELS" and caption:
-            datos["caption"] = caption
-            datos["share_to_feed"] = "true"
+        if media_type == "REELS":
+            if caption:
+                datos["caption"] = caption
+                datos["share_to_feed"] = "true"
+            if PUBLICAR_COMO_REEL_DE_PRUEBA:
+                datos["trial_params"] = json.dumps({
+                    "graduation_strategy": "SS_PERFORMANCE"
+                })
 
         resp = self._graph_post(f"/{self.account_id}/media", datos)
 
