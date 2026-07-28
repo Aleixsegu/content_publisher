@@ -97,8 +97,7 @@ BUSQUEDAS_OBJETIVO = [
     "shitpost",
     "memes xokas",
     "memes chiringuito",
-    "memes futbol",
-    "memes velada"
+    "memes futbol"
 ]
 
 # Región objetivo para filtrar resultados
@@ -113,7 +112,7 @@ CUENTAS_EXCLUIDAS = {"failets", "lobostroy", "el.borov.memes", "vristok", "alway
                      "aitor.as", "genpo28", "deadpoolmadrid", "lizi_culer", "blaaugrana_", "7alvaricoke.2_", "danimoraales10", "bailafm", "aiaiai.ai",
                      "anonimo17213", "elrelatodeportivo", "zellendustreal", "psg", "mismemesymas", "bestiblaze_.oficial", "monicahumor86", "teamd8pro",
                      "thegalaxy966", "rdefurbol", "samuelsupongo", "oopsitsmj", "gestnub", "elpajaroopina", "zurdazoo", "noticierotv3", "klasick.project2",
-                     "infojobs", "24maiastlss", "aitanafulstream", "naatamontadaa", "minduu.__", "luiis.futbol_" }
+                     "infojobs", "24maiastlss", "aitanafulstream", "minduu.__"}
 
 # Al menos uno de estos términos debe aparecer en la descripción del vídeo.
 # Garantiza que el contenido sea efectivamente un meme o humor, y no un vídeo
