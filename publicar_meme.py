@@ -88,16 +88,17 @@ logger = logging.getLogger(__name__)
 
 # Búsquedas de palabras clave para encontrar memes de España (en orden de prioridad)
 BUSQUEDAS_OBJETIVO = [
-    "meme españa",
-    "meme español",
-    "shitpost españa",
-    "shitpost español",
     "meme",
     "memes",
-    "shitpost",
+    "meme españa",
+    "meme español",
     "memes xokas",
     "memes chiringuito",
-    "memes futbol"
+    "memes futbol",
+    "memes youtube",
+    "memes tiktok",
+    "memes twitch",
+    "memes memes",
 ]
 
 # Región objetivo para filtrar resultados
@@ -112,13 +113,13 @@ CUENTAS_EXCLUIDAS = {"failets", "lobostroy", "el.borov.memes", "vristok", "alway
                      "aitor.as", "genpo28", "deadpoolmadrid", "lizi_culer", "blaaugrana_", "7alvaricoke.2_", "danimoraales10", "bailafm", "aiaiai.ai",
                      "anonimo17213", "elrelatodeportivo", "zellendustreal", "psg", "mismemesymas", "bestiblaze_.oficial", "monicahumor86", "teamd8pro",
                      "thegalaxy966", "rdefurbol", "samuelsupongo", "oopsitsmj", "gestnub", "elpajaroopina", "zurdazoo", "noticierotv3", "klasick.project2",
-                     "infojobs", "24maiastlss", "aitanafulstream", "minduu.__", "cuenta_nicho", "editor.gum"}
+                     "infojobs", "24maiastlss", "aitanafulstream", "minduu.__", "cuenta_nicho", "editor.gum", "de_tony_oficial"}
 
 # Al menos uno de estos términos debe aparecer en la descripción del vídeo.
 # Garantiza que el contenido sea efectivamente un meme o humor, y no un vídeo
 # cualquiera que solo mencione "españa" junto a la palabra meme de pasada.
 TAGS_MEME_REQUERIDOS = {
-    "meme", "memes", "humor", "gracioso", "momazo", "shitpost",
+    "meme", "memes", "gracioso",
 }
 
 # Número de videos a seleccionar para publicación
@@ -318,6 +319,48 @@ class ClienteTikTok:
 
         logger.info("   → %d vídeos obtenidos para '%s'", len(todos), keywords)
         return todos
+
+    def buscar_pagina_videos(
+        self,
+        keywords: str,
+        cursor: int = 0,
+        publish_time: int = 1
+    ) -> tuple[list[dict], int, bool]:
+        """
+        Busca una sola página de vídeos (hasta 30 resultados) en TikTok para una palabra clave y cursor dados.
+
+        Args:
+            keywords: Términos de búsqueda (ej: "meme españa").
+            cursor: El cursor de paginación para esta petición.
+            publish_time: Ventana de tiempo (1=24h, 7=7 días).
+
+        Retorna:
+            tuple[list[dict], int, bool]: (lista_de_videos_raw, next_cursor, has_more)
+        """
+        url_api = "https://www.tikwm.com/api/feed/search"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+        payload = {
+            "keywords": keywords,
+            "count": 30,
+            "cursor": cursor,
+            "publish_time": publish_time,
+        }
+        try:
+            resp = requests.post(url_api, data=payload, headers=headers, timeout=20)
+            if resp.status_code != 200:
+                return [], cursor, False
+            datos = resp.json()
+            if datos.get("code") == 0 and "data" in datos:
+                videos = datos["data"].get("videos", [])
+                has_more = datos["data"].get("hasMore", False)
+                next_cursor = datos["data"].get("cursor", cursor)
+                return videos, next_cursor, has_more
+        except Exception as e:
+            logger.debug("Error buscando '%s' cursor %d: %s", keywords, cursor, e)
+        return [], cursor, False
 
     def descargar_video_sin_watermark(
         self,
@@ -521,8 +564,12 @@ def es_video_valido(video: dict) -> bool:
 def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
     """
     Busca vídeos de memes de España usando palabras clave ("meme españa", etc.),
-    recorriendo todas las búsquedas configuradas y recopilando todos los candidatos
-    válidos posibles para maximizar la muestra y elegir el mejor TOP N.
+    recorriendo de forma paginada y en bucle todas las búsquedas configuradas
+    para recopilar al menos 5 candidatos válidos.
+
+    El bucle solicita secuencialmente la página N de cada palabra clave,
+    filtra los videos y, si todavía no tiene 5, avanza a la página N+1.
+    Se detiene inmediatamente al alcanzar el mínimo de 5 videos válidos.
 
     Criterios de validez:
     - Región: ES (España)
@@ -541,54 +588,87 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
     candidatos = []
     ids_vistos = set()
 
-    for keywords in BUSQUEDAS_OBJETIVO:
-        videos_raw = cliente.buscar_videos_por_keywords(keywords, max_paginas=10, publish_time=1)
+    # Mantenemos el estado de paginación (cursor y si hay más contenido) para cada palabra clave
+    estado_busquedas = {
+        kw: {"cursor": 0, "has_more": True}
+        for kw in BUSQUEDAS_OBJETIVO
+    }
 
-        for v_raw in videos_raw:
-            video = normalizar_metadatos_tikwm(v_raw)
-            video_id = video.get("id", "")
+    pagina = 1
+    MAX_PAGINAS_TOTAL = 15  # Límite de seguridad para evitar bucles infinitos
 
-            if not video_id or video_id in ids_vistos:
+    while len(candidatos) < TOP_N_VIDEOS and pagina <= MAX_PAGINAS_TOTAL:
+        logger.info("📡 [Página %d] Buscando candidatos en TikTok...", pagina)
+        alguna_busqueda_activa = False
+
+        for keywords in BUSQUEDAS_OBJETIVO:
+            if len(candidatos) >= TOP_N_VIDEOS:
+                break
+
+            estado = estado_busquedas[keywords]
+            if not estado["has_more"]:
                 continue
 
-            # Filtro de región
-            region = v_raw.get("region", "").upper()
-            if region not in REGION_OBJETIVO:
-                continue
+            alguna_busqueda_activa = True
+            videos_raw, next_cursor, has_more = cliente.buscar_pagina_videos(
+                keywords, cursor=estado["cursor"], publish_time=1
+            )
 
-            # Filtro de cuentas excluidas (evitar contenido no deseado)
-            uploader = video.get("uploader", "").lower()
-            if uploader in CUENTAS_EXCLUIDAS:
-                continue
+            # Actualizamos el cursor y si hay más páginas disponibles para esta búsqueda
+            estado["cursor"] = next_cursor
+            estado["has_more"] = has_more
 
-            # Filtro de antigüedad: últimas 24h
-            horas = (ahora - video.get("timestamp", 0)) / 3600
-            if horas > 24.0:
-                continue
+            for v_raw in videos_raw:
+                video = normalizar_metadatos_tikwm(v_raw)
+                video_id = video.get("id", "")
 
-            # Filtro de duración: 5 – 90 segundos
-            if not (5 <= video.get("duration", 0) <= 90):
-                continue
+                if not video_id or video_id in ids_vistos:
+                    continue
 
-            # Filtro de contenido: la descripción debe contener al menos un hashtag
-            # de meme/humor EXACTO (ej: #meme sí, #memesespaña no).
-            desc = v_raw.get("title", "").lower()
-            # Extraemos los tokens del texto separando por cualquier carácter no alfanumérico
-            # (excepto #) para obtener palabras como "#meme" sin trailing punctuation.
-            tokens = set(re.sub(r"[^\w#]", " ", desc).split())
-            if not any(f"#{tag}" in tokens for tag in TAGS_MEME_REQUERIDOS):
-                continue
+                # Filtro de región
+                region = v_raw.get("region", "").upper()
+                if region not in REGION_OBJETIVO:
+                    continue
 
-            ids_vistos.add(video_id)
-            video["region"] = region
-            video["_busqueda_origen"] = keywords
-            video["_puntuacion_viral"] = calcular_puntuacion_viral(video)
-            candidatos.append(video)
+                # Filtro de cuentas excluidas (evitar contenido no deseado)
+                uploader = video.get("uploader", "").lower()
+                if uploader in CUENTAS_EXCLUIDAS:
+                    continue
 
-        time.sleep(1.5)
+                # Filtro de antigüedad: últimas 24h
+                horas = (ahora - video.get("timestamp", 0)) / 3600
+                if horas > 24.0:
+                    continue
+
+                # Filtro de duración: 5 – 90 segundos
+                if not (5 <= video.get("duration", 0) <= 90):
+                    continue
+
+                # Filtro de contenido: la descripción debe contener al menos un hashtag
+                # de meme/humor EXACTO (ej: #meme sí, #memesespaña no).
+                desc = v_raw.get("title", "").lower()
+                tokens = set(re.sub(r"[^\w#]", " ", desc).split())
+                if not any(f"#{tag}" in tokens for tag in TAGS_MEME_REQUERIDOS):
+                    continue
+
+                ids_vistos.add(video_id)
+                video["region"] = region
+                video["_busqueda_origen"] = keywords
+                video["_puntuacion_viral"] = calcular_puntuacion_viral(video)
+                candidatos.append(video)
+
+            # Pequeño retardo entre peticiones para evitar bloqueos
+            time.sleep(1.5)
+
+        # Si todas las palabras clave se han quedado sin páginas de resultados, rompemos el bucle
+        if not alguna_busqueda_activa:
+            logger.info("ℹ️ No hay más páginas disponibles para ninguna de las palabras clave en TikTok.")
+            break
+
+        pagina += 1
 
     if not candidatos:
-        logger.warning("⚠️ No se encontraron vídeos de España en las últimas 24h. Fin limpio.")
+        logger.warning("⚠️ No se encontraron vídeos de España que pasen todos los filtros. Fin limpio.")
         return []
 
     candidatos.sort(key=lambda v: v["_puntuacion_viral"], reverse=True)
