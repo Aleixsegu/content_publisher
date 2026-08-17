@@ -87,6 +87,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Búsquedas de palabras clave para encontrar memes de España (en orden de prioridad)
+# NOTA: La API feed/search de TikWM es bloqueada por Cloudflare desde IPs de datacenter
+# (como las de GitHub Actions). Se mantiene como fallback por si se recupera.
 BUSQUEDAS_OBJETIVO = [
     "meme",
     "memes",
@@ -101,6 +103,21 @@ BUSQUEDAS_OBJETIVO = [
     "memes memes",
 ]
 
+# IDs de los hashtags (challenges) de TikTok para memes en español.
+# Obtenidos vía API challenge/info de TikWM. Este endpoint NO está bloqueado por Cloudflare.
+# El orden importa: los hashtags más específicos y relevantes van primero.
+CHALLENGES_OBJETIVO = [
+    ("memesespaña",    "1616118699624453"),
+    ("memeespañol",    "1615591904692229"),
+    ("memesespañoles", "1618542792984581"),
+    ("memeespaña",     "1620226152694789"),
+    ("memesdeespaña",  "1659431125995525"),
+    ("shitpost",       "563683"),
+    ("memes",          "128971"),
+    ("meme",           "23864"),
+    ("humor",          "19336"),
+]
+
 # Región objetivo para filtrar resultados
 REGION_OBJETIVO = {"ES"}
 
@@ -113,7 +130,7 @@ CUENTAS_EXCLUIDAS = {"failets", "lobostroy", "el.borov.memes", "vristok", "alway
                      "aitor.as", "genpo28", "deadpoolmadrid", "lizi_culer", "blaaugrana_", "7alvaricoke.2_", "danimoraales10", "bailafm", "aiaiai.ai",
                      "anonimo17213", "elrelatodeportivo", "zellendustreal", "psg", "mismemesymas", "bestiblaze_.oficial", "monicahumor86", "teamd8pro",
                      "thegalaxy966", "rdefurbol", "samuelsupongo", "oopsitsmj", "gestnub", "elpajaroopina", "zurdazoo", "noticierotv3", "klasick.project2",
-                     "infojobs", "24maiastlss", "aitanafulstream", "minduu.__", "cuenta_nicho", "editor.gum", "de_tony_oficial"}
+                     "infojobs", "24maiastlss", "aitanafulstream", "minduu.__", "cuenta_nicho", "editor.gum", "de_tony_oficial", "cuartacuenta08"}
 
 # Al menos uno de estos términos debe aparecer en la descripción del vídeo.
 # Garantiza que el contenido sea efectivamente un meme o humor, y no un vídeo
@@ -327,12 +344,8 @@ class ClienteTikTok:
         publish_time: int = 1
     ) -> tuple[list[dict], int, bool]:
         """
-        Busca una sola página de vídeos (hasta 30 resultados) en TikTok para una palabra clave y cursor dados.
-
-        Args:
-            keywords: Términos de búsqueda (ej: "meme españa").
-            cursor: El cursor de paginación para esta petición.
-            publish_time: Ventana de tiempo (1=24h, 7=7 días).
+        Busca una sola página de vídeos via feed/search. NOTA: este endpoint está bloqueado por
+        Cloudflare desde IPs de datacenter (GitHub Actions). Se mantiene como método de fallback.
 
         Retorna:
             tuple[list[dict], int, bool]: (lista_de_videos_raw, next_cursor, has_more)
@@ -351,6 +364,7 @@ class ClienteTikTok:
         try:
             resp = requests.post(url_api, data=payload, headers=headers, timeout=20)
             if resp.status_code != 200:
+                logger.debug("feed/search bloqueado (HTTP %d) para '%s'", resp.status_code, keywords)
                 return [], cursor, False
             datos = resp.json()
             if datos.get("code") == 0 and "data" in datos:
@@ -360,6 +374,52 @@ class ClienteTikTok:
                 return videos, next_cursor, has_more
         except Exception as e:
             logger.debug("Error buscando '%s' cursor %d: %s", keywords, cursor, e)
+        return [], cursor, False
+
+    def buscar_pagina_por_challenge(
+        self,
+        challenge_id: str,
+        challenge_name: str,
+        cursor: int = 0,
+    ) -> tuple[list[dict], int, bool]:
+        """
+        Obtiene una página de vídeos recientes de un hashtag/challenge de TikTok usando la
+        API challenge/posts de TikWM. Este endpoint NO está bloqueado por Cloudflare y
+        funciona correctamente desde IPs de datacenter como las de GitHub Actions.
+
+        Args:
+            challenge_id: ID numérico del challenge (ej: "23864" para #meme).
+            challenge_name: Nombre del hashtag, solo para logging.
+            cursor: Cursor de paginación.
+
+        Retorna:
+            tuple[list[dict], int, bool]: (lista_de_videos_raw, next_cursor, has_more)
+        """
+        url_api = "https://www.tikwm.com/api/challenge/posts"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+        payload = {
+            "challenge_id": challenge_id,
+            "count": 30,
+            "cursor": cursor,
+        }
+        try:
+            resp = requests.post(url_api, data=payload, headers=headers, timeout=20)
+            if resp.status_code != 200:
+                logger.debug("challenge/posts HTTP %d para #%s", resp.status_code, challenge_name)
+                return [], cursor, False
+            datos = resp.json()
+            if datos.get("code") == 0 and "data" in datos:
+                videos = datos["data"].get("videos", [])
+                has_more = datos["data"].get("hasMore", False)
+                next_cursor = datos["data"].get("cursor", cursor)
+                return videos, next_cursor, has_more
+            else:
+                logger.debug("challenge/posts error para #%s: %s", challenge_name, datos.get("msg"))
+        except Exception as e:
+            logger.debug("Error en challenge/posts #%s cursor %d: %s", challenge_name, cursor, e)
         return [], cursor, False
 
     def descargar_video_sin_watermark(
@@ -563,13 +623,12 @@ def es_video_valido(video: dict) -> bool:
 
 def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
     """
-    Busca vídeos de memes de España usando palabras clave ("meme españa", etc.),
-    recorriendo de forma paginada y en bucle todas las búsquedas configuradas
-    para recopilar al menos 5 candidatos válidos.
+    Busca vídeos de memes de España usando el endpoint challenge/posts de TikWM,
+    que NO está bloqueado por Cloudflare desde IPs de datacenter (GitHub Actions).
 
-    El bucle solicita secuencialmente la página N de cada palabra clave,
-    filtra los videos y, si todavía no tiene 5, avanza a la página N+1.
-    Se detiene inmediatamente al alcanzar el mínimo de 5 videos válidos.
+    Recorre de forma paginada y en bucle los CHALLENGES_OBJETIVO configurados
+    para recopilar al menos 5 candidatos válidos. Si no se encuentran suficientes,
+    intenta como fallback el endpoint feed/search.
 
     Criterios de validez:
     - Región: ES (España)
@@ -588,33 +647,33 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
     candidatos = []
     ids_vistos = set()
 
-    # Mantenemos el estado de paginación (cursor y si hay más contenido) para cada palabra clave
-    estado_busquedas = {
-        kw: {"cursor": 0, "has_more": True}
-        for kw in BUSQUEDAS_OBJETIVO
+    # ── Fuente primaria: challenge/posts (no bloqueado por Cloudflare) ────────
+    # Mantenemos el estado de paginación por cada challenge
+    estado_challenges = {
+        ch_id: {"cursor": 0, "has_more": True, "name": ch_name}
+        for ch_name, ch_id in CHALLENGES_OBJETIVO
     }
 
     pagina = 1
     MAX_PAGINAS_TOTAL = 15  # Límite de seguridad para evitar bucles infinitos
 
     while len(candidatos) < TOP_N_VIDEOS and pagina <= MAX_PAGINAS_TOTAL:
-        logger.info("📡 [Página %d] Buscando candidatos en TikTok...", pagina)
-        alguna_busqueda_activa = False
+        logger.info("📡 [Página %d - challenges] Buscando candidatos en TikTok...", pagina)
+        alguna_challenge_activa = False
 
-        for keywords in BUSQUEDAS_OBJETIVO:
+        for ch_name, ch_id in CHALLENGES_OBJETIVO:
             if len(candidatos) >= TOP_N_VIDEOS:
                 break
 
-            estado = estado_busquedas[keywords]
+            estado = estado_challenges[ch_id]
             if not estado["has_more"]:
                 continue
 
-            alguna_busqueda_activa = True
-            videos_raw, next_cursor, has_more = cliente.buscar_pagina_videos(
-                keywords, cursor=estado["cursor"], publish_time=1
+            alguna_challenge_activa = True
+            videos_raw, next_cursor, has_more = cliente.buscar_pagina_por_challenge(
+                ch_id, ch_name, cursor=estado["cursor"]
             )
 
-            # Actualizamos el cursor y si hay más páginas disponibles para esta búsqueda
             estado["cursor"] = next_cursor
             estado["has_more"] = has_more
 
@@ -630,7 +689,7 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
                 if region not in REGION_OBJETIVO:
                     continue
 
-                # Filtro de cuentas excluidas (evitar contenido no deseado)
+                # Filtro de cuentas excluidas
                 uploader = video.get("uploader", "").lower()
                 if uploader in CUENTAS_EXCLUIDAS:
                     continue
@@ -644,28 +703,73 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
                 if not (5 <= video.get("duration", 0) <= 90):
                     continue
 
-                # Filtro de contenido: la descripción debe contener al menos un hashtag
-                # de meme/humor EXACTO (ej: #meme sí, #memesespaña no).
-                desc = v_raw.get("title", "").lower()
-                tokens = set(re.sub(r"[^\w#]", " ", desc).split())
-                if not any(f"#{tag}" in tokens for tag in TAGS_MEME_REQUERIDOS):
-                    continue
-
                 ids_vistos.add(video_id)
                 video["region"] = region
-                video["_busqueda_origen"] = keywords
+                video["_busqueda_origen"] = f"#{ch_name}"
                 video["_puntuacion_viral"] = calcular_puntuacion_viral(video)
                 candidatos.append(video)
 
-            # Pequeño retardo entre peticiones para evitar bloqueos
             time.sleep(1.5)
 
-        # Si todas las palabras clave se han quedado sin páginas de resultados, rompemos el bucle
-        if not alguna_busqueda_activa:
-            logger.info("ℹ️ No hay más páginas disponibles para ninguna de las palabras clave en TikTok.")
+        if not alguna_challenge_activa:
+            logger.info("ℹ️ No hay más páginas de challenges disponibles.")
             break
 
         pagina += 1
+
+    # ── Fuente de fallback: feed/search (puede estar bloqueado por Cloudflare) ─
+    if len(candidatos) < TOP_N_VIDEOS:
+        logger.info("📡 [Fallback] Probando feed/search para completar candidatos...")
+        estado_busquedas = {
+            kw: {"cursor": 0, "has_more": True}
+            for kw in BUSQUEDAS_OBJETIVO
+        }
+        pagina_fb = 1
+        while len(candidatos) < TOP_N_VIDEOS and pagina_fb <= 5:
+            alguna_busqueda_activa = False
+            for keywords in BUSQUEDAS_OBJETIVO:
+                if len(candidatos) >= TOP_N_VIDEOS:
+                    break
+                estado = estado_busquedas[keywords]
+                if not estado["has_more"]:
+                    continue
+                alguna_busqueda_activa = True
+                videos_raw, next_cursor, has_more = cliente.buscar_pagina_videos(
+                    keywords, cursor=estado["cursor"], publish_time=1
+                )
+                estado["cursor"] = next_cursor
+                estado["has_more"] = has_more
+
+                for v_raw in videos_raw:
+                    video = normalizar_metadatos_tikwm(v_raw)
+                    video_id = video.get("id", "")
+                    if not video_id or video_id in ids_vistos:
+                        continue
+                    region = v_raw.get("region", "").upper()
+                    if region not in REGION_OBJETIVO:
+                        continue
+                    uploader = video.get("uploader", "").lower()
+                    if uploader in CUENTAS_EXCLUIDAS:
+                        continue
+                    horas = (ahora - video.get("timestamp", 0)) / 3600
+                    if horas > 24.0:
+                        continue
+                    if not (5 <= video.get("duration", 0) <= 90):
+                        continue
+                    desc = v_raw.get("title", "").lower()
+                    tokens = set(re.sub(r"[^\w#]", " ", desc).split())
+                    if not any(f"#{tag}" in tokens for tag in TAGS_MEME_REQUERIDOS):
+                        continue
+                    ids_vistos.add(video_id)
+                    video["region"] = region
+                    video["_busqueda_origen"] = keywords
+                    video["_puntuacion_viral"] = calcular_puntuacion_viral(video)
+                    candidatos.append(video)
+                time.sleep(1.5)
+
+            if not alguna_busqueda_activa:
+                break
+            pagina_fb += 1
 
     if not candidatos:
         logger.warning("⚠️ No se encontraron vídeos de España que pasen todos los filtros. Fin limpio.")
