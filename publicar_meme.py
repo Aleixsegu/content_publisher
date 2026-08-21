@@ -1330,22 +1330,38 @@ class SubidaResumibleMeta:
 
     def subir_video_a_host_temporal(self, ruta_video: Path) -> Optional[str]:
         """
-        Sube temporalmente el vídeo a un servidor público gratuito (tmpfiles.org)
-        para obtener la URL pública exigida oficialmente por Meta para Trial Reels.
+        Sube temporalmente el vídeo a un servidor público gratuito de alta velocidad (litterbox.catbox.moe)
+        para obtener la URL pública limpia exigida por Meta para publicar Trial Reels.
         """
+        # Intento 1: litterbox.catbox.moe (archivos temporales de 1 hora, excelente velocidad y compatibilidad con Meta)
         try:
-            logger.info("☁️ Generando URL pública temporal para Trial Reel (tmpfiles.org)...")
+            logger.info("☁️ Generando URL pública temporal para Trial Reel (litterbox.catbox.moe)...")
+            with open(ruta_video, "rb") as f:
+                data = {"reqtype": "fileupload", "time": "1h"}
+                files = {"fileToUpload": (ruta_video.name, f, "video/mp4")}
+                r = requests.post("https://litterbox.catbox.moe/resources/internals/api.php", data=data, files=files, timeout=60)
+                if r.status_code == 200 and r.text.startswith("http"):
+                    dl_url = r.text.strip()
+                    logger.info("   ✅ URL pública creada: %s", dl_url)
+                    return dl_url
+        except Exception as e:
+            logger.error("   ❌ Error en litterbox: %s", e)
+
+        # Intento 2: tmpfiles.org
+        try:
+            logger.info("☁️ Reintentando con tmpfiles.org...")
             with open(ruta_video, "rb") as f:
                 r = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=60)
                 if r.status_code == 200:
-                    data = r.json()
-                    if data.get("status") == "success" and "data" in data and "url" in data.get("data", {}):
-                        page_url = data["data"]["url"]
+                    data_resp = r.json()
+                    if data_resp.get("status") == "success" and "data" in data_resp and "url" in data_resp["data"]:
+                        page_url = data_resp["data"]["url"]
                         dl_url = page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
                         logger.info("   ✅ URL pública creada: %s", dl_url)
                         return dl_url
         except Exception as e:
-            logger.error("   ❌ Error generando URL pública temporal: %s", e)
+            logger.error("   ❌ Error en tmpfiles: %s", e)
+
         return None
 
     def crear_contenedor_trial_reel(
@@ -1404,46 +1420,33 @@ class SubidaResumibleMeta:
         max_reintentos: int = 3,
     ) -> Optional[str]:
         """
-        Flujo completo para publicar un Reel. Si PUBLICAR_COMO_REEL_DE_PRUEBA es True,
-        sigue strictly la especificación cURL de la documentación oficial de Meta.
+        Flujo completo para publicar un Reel de Prueba (Trial Reel) obligatoriamente
+        vía la API oficial verificada con URL pública y payload JSON.
         """
-        logger.info("\n🎬 === PUBLICANDO REEL (subida a Meta) ===")
-
-        if PUBLICAR_COMO_REEL_DE_PRUEBA:
-            url_temp = self.subir_video_a_host_temporal(ruta_video)
-            if url_temp:
-                contenedor_id = self.crear_contenedor_trial_reel(url_temp, caption)
-                if contenedor_id and self.esperar_contenedor_listo(contenedor_id):
-                    media_id = self.publicar_contenedor(contenedor_id)
-                    if media_id:
-                        return media_id
-            logger.warning("   ⚠️ No se pudo publicar por el flujo de Trial Reel oficial, intentando fallback resumable...")
+        logger.info("\n🎬 === PUBLICANDO REEL DE PRUEBA (Trial Reel) ===")
 
         for intento in range(1, max_reintentos + 1):
             if intento > 1:
-                logger.info("   ⏳ Reintentando publicación del Reel (intento %d/%d)...", intento, max_reintentos)
-                time.sleep(15)
+                logger.info("   ⏳ Reintentando publicación del Trial Reel (intento %d/%d)...", intento, max_reintentos)
+                time.sleep(10)
 
-            # Paso 1: Crear contenedor resumible
-            resultado = self.crear_contenedor_resumible("REELS", caption)
-            if not resultado:
-                continue
-            contenedor_id, uri_rupload = resultado
-
-            # Paso 2: Subir el binario del video
-            if not self.subir_binario_a_rupload(uri_rupload, ruta_video):
+            url_temp = self.subir_video_a_host_temporal(ruta_video)
+            if not url_temp:
                 continue
 
-            # Paso 3: Esperar a que Meta procese el video
+            contenedor_id = self.crear_contenedor_trial_reel(url_temp, caption)
+            if not contenedor_id:
+                continue
+
             if not self.esperar_contenedor_listo(contenedor_id):
                 continue
 
-            # Paso 4: Publicar
             media_id = self.publicar_contenedor(contenedor_id)
             if media_id:
+                logger.info("🎉 ¡Reel de Prueba (Trial Reel) publicado con éxito! Media ID: %s", media_id)
                 return media_id
 
-        logger.error("❌ Fallaron todos los intentos para publicar el Reel.")
+        logger.error("❌ Fallaron todos los intentos para publicar el Reel de Prueba.")
         return None
 
     def publicar_story_desde_archivo(
