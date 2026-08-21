@@ -1106,16 +1106,42 @@ class SubidaResumibleMeta:
             logger.error("❌ Error de red en Graph GET: %s", e)
             return None
 
+    def _graph_post_json(self, endpoint: str, datos: dict) -> Optional[dict]:
+        """
+        Realiza una petición POST a Meta Graph API enviando JSON (Content-Type: application/json).
+        Requerido oficialmente por Meta para interpretar 'trial_params' como objeto JSON anidado.
+        """
+        url = f"{META_GRAPH_BASE}{endpoint}"
+        params = {"access_token": self.token}
+        headers = {"Content-Type": "application/json"}
+
+        try:
+            resp = requests.post(url, params=params, json=datos, headers=headers, timeout=60)
+            datos_resp = resp.json()
+
+            if "error" in datos_resp:
+                err = datos_resp["error"]
+                logger.error(
+                    "❌ Error Meta Graph API [%s] código %s: %s",
+                    err.get("type", "?"),
+                    err.get("code", "?"),
+                    err.get("message", "?"),
+                )
+                return None
+
+            return datos_resp
+
+        except requests.exceptions.RequestException as e:
+            logger.error("❌ Error de red en Graph API (JSON): %s", e)
+            return None
+
     def crear_contenedor_resumible(
         self,
         media_type: str,
         caption: str = "",
     ) -> Optional[tuple[str, str]]:
         """
-        Paso 1: Crea un contenedor de medios con upload_type=resumable.
-
-        Este tipo de contenedor no requiere URL pública: Meta devuelve
-        una URI de rupload.facebook.com a la que se sube el binario.
+        Paso 1: Crea un contenedor de medios con upload_type=resumable enviando JSON.
 
         Args:
             media_type: 'REELS' o 'STORIES'.
@@ -1136,18 +1162,18 @@ class SubidaResumibleMeta:
                 datos["caption"] = caption
 
             if PUBLICAR_COMO_REEL_DE_PRUEBA:
-                datos["trial_params"] = json.dumps({
+                datos["trial_params"] = {
                     "graduation_strategy": ESTRATEGIA_GRADUACION_REEL_PRUEBA
-                })
-                datos["share_to_feed"] = "false"
+                }
+                datos["share_to_feed"] = False
                 logger.info(
                     "   🧪 Configurado contenedor de Reel de Prueba (Trial Reel) con graduation_strategy=%s",
                     ESTRATEGIA_GRADUACION_REEL_PRUEBA
                 )
             elif caption:
-                datos["share_to_feed"] = "true"
+                datos["share_to_feed"] = True
 
-        resp = self._graph_post(f"/{self.account_id}/media", datos)
+        resp = self._graph_post_json(f"/{self.account_id}/media", datos)
 
         if resp and "id" in resp and "uri" in resp:
             contenedor_id = resp["id"]
