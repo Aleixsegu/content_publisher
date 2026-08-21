@@ -159,6 +159,9 @@ TAGS_MEME_REQUERIDOS = {
 # Número de videos a seleccionar para publicación
 TOP_N_VIDEOS = 5
 
+# Número máximo de páginas a recorrer por palabra clave antes de cambiar de ventana horaria
+MAX_PAGINAS_POR_BUSQUEDA = 5
+
 # Dimensiones estándar para formato vertical Instagram (9:16)
 ANCHO_VIDEO = 1080
 ALTO_VIDEO = 1920
@@ -180,6 +183,7 @@ META_API_VERSION = "v20.0"
 # Si está en True, los Reels se publicarán como "Reel de prueba" (Trial Reel)
 # compartiéndose únicamente con no seguidores.
 PUBLICAR_COMO_REEL_DE_PRUEBA = True
+ESTRATEGIA_GRADUACION_REEL_PRUEBA = "MANUAL"  # Opciones: "MANUAL" o "SS_PERFORMANCE"
 
 # Host para subida de videos directa a Meta
 META_RUPLOAD_HOST = "https://rupload.facebook.com"
@@ -711,7 +715,7 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
     candidatos = []
     ids_vistos = set()
 
-    MAX_PAGINAS_TOTAL = 2  # Límite estricto de 2 páginas por palabra clave para evitar bucles
+    MAX_PAGINAS_TOTAL = MAX_PAGINAS_POR_BUSQUEDA
     ventanas_antiguedad = [24.0, 48.0, 168.0]
 
     for max_horas in ventanas_antiguedad:
@@ -1133,10 +1137,13 @@ class SubidaResumibleMeta:
 
             if PUBLICAR_COMO_REEL_DE_PRUEBA:
                 datos["trial_params"] = json.dumps({
-                    "graduation_strategy": "SS_PERFORMANCE"
+                    "graduation_strategy": ESTRATEGIA_GRADUACION_REEL_PRUEBA
                 })
                 datos["share_to_feed"] = "false"
-                logger.info("   🧪 Configurado contenedor de Reel de Prueba (Trial Reel) con graduation_strategy=SS_PERFORMANCE")
+                logger.info(
+                    "   🧪 Configurado contenedor de Reel de Prueba (Trial Reel) con graduation_strategy=%s",
+                    ESTRATEGIA_GRADUACION_REEL_PRUEBA
+                )
             elif caption:
                 datos["share_to_feed"] = "true"
 
