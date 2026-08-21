@@ -1162,18 +1162,18 @@ class SubidaResumibleMeta:
                 datos["caption"] = caption
 
             if PUBLICAR_COMO_REEL_DE_PRUEBA:
-                datos["trial_params"] = {
+                datos["trial_params"] = json.dumps({
                     "graduation_strategy": ESTRATEGIA_GRADUACION_REEL_PRUEBA
-                }
-                datos["share_to_feed"] = False
+                })
+                datos["share_to_feed"] = "false"
                 logger.info(
                     "   🧪 Configurado contenedor de Reel de Prueba (Trial Reel) con graduation_strategy=%s",
                     ESTRATEGIA_GRADUACION_REEL_PRUEBA
                 )
             elif caption:
-                datos["share_to_feed"] = True
+                datos["share_to_feed"] = "true"
 
-        resp = self._graph_post_json(f"/{self.account_id}/media", datos)
+        resp = self._graph_post(f"/{self.account_id}/media", datos)
 
         if resp and "id" in resp and "uri" in resp:
             contenedor_id = resp["id"]
