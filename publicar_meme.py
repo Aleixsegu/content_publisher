@@ -1330,37 +1330,38 @@ class SubidaResumibleMeta:
 
     def subir_video_a_host_temporal(self, ruta_video: Path) -> Optional[str]:
         """
-        Sube temporalmente el vídeo a un servidor público gratuito de alta velocidad (litterbox.catbox.moe)
+        Sube temporalmente el vídeo a un servidor público gratuito de alta velocidad (Catbox / Litterbox)
         para obtener la URL pública limpia exigida por Meta para publicar Trial Reels.
         """
-        # Intento 1: litterbox.catbox.moe (archivos temporales de 1 hora, excelente velocidad y compatibilidad con Meta)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+
+        # Intento 1: Catbox.moe (servidor CDN principal de alta velocidad y compatibilidad total con Meta)
         try:
-            logger.info("☁️ Generando URL pública temporal para Trial Reel (litterbox.catbox.moe)...")
+            logger.info("☁️ Generando URL pública temporal para Trial Reel (catbox.moe)...")
+            with open(ruta_video, "rb") as f:
+                data = {"reqtype": "fileupload"}
+                files = {"fileToUpload": (ruta_video.name, f, "video/mp4")}
+                r = requests.post("https://catbox.moe/user/api.php", data=data, files=files, headers=headers, timeout=60)
+                if r.status_code == 200 and r.text.startswith("http"):
+                    dl_url = r.text.strip()
+                    logger.info("   ✅ URL pública creada: %s", dl_url)
+                    return dl_url
+        except Exception as e:
+            logger.error("   ❌ Error en catbox: %s", e)
+
+        # Intento 2: litterbox.catbox.moe (archivos temporales de 1 hora)
+        try:
+            logger.info("☁️ Reintentando con litterbox.catbox.moe...")
             with open(ruta_video, "rb") as f:
                 data = {"reqtype": "fileupload", "time": "1h"}
                 files = {"fileToUpload": (ruta_video.name, f, "video/mp4")}
-                r = requests.post("https://litterbox.catbox.moe/resources/internals/api.php", data=data, files=files, timeout=60)
+                r = requests.post("https://litterbox.catbox.moe/resources/internals/api.php", data=data, files=files, headers=headers, timeout=60)
                 if r.status_code == 200 and r.text.startswith("http"):
                     dl_url = r.text.strip()
                     logger.info("   ✅ URL pública creada: %s", dl_url)
                     return dl_url
         except Exception as e:
             logger.error("   ❌ Error en litterbox: %s", e)
-
-        # Intento 2: tmpfiles.org
-        try:
-            logger.info("☁️ Reintentando con tmpfiles.org...")
-            with open(ruta_video, "rb") as f:
-                r = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=60)
-                if r.status_code == 200:
-                    data_resp = r.json()
-                    if data_resp.get("status") == "success" and "data" in data_resp and "url" in data_resp["data"]:
-                        page_url = data_resp["data"]["url"]
-                        dl_url = page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
-                        logger.info("   ✅ URL pública creada: %s", dl_url)
-                        return dl_url
-        except Exception as e:
-            logger.error("   ❌ Error en tmpfiles: %s", e)
 
         return None
 
