@@ -1328,26 +1328,25 @@ class SubidaResumibleMeta:
         logger.error("   ❌ Error al publicar el contenedor.")
         return None
 
-def subir_video_a_host_temporal(ruta_video: Path) -> Optional[str]:
-    """
-    Sube temporalmente el vídeo a un servidor público gratuito (tmpfiles.org)
-    para obtener la URL pública exigida oficialmente por Meta para Trial Reels.
-    """
-    try:
-        logger.info("☁️ Generando URL pública temporal para Trial Reel (tmpfiles.org)...")
-        with open(ruta_video, "rb") as f:
-            r = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=60)
-            if r.status_code == 200:
-                data = r.json()
-                if data.get("status") == "success" and "data" in data and "url" in data.get("data", {}):
-                    page_url = data["data"]["url"]
-                    dl_url = page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
-                    logger.info("   ✅ URL pública creada: %s", dl_url)
-                    return dl_url
-    except Exception as e:
-        logger.error("   ❌ Error generando URL pública temporal: %s", e)
-    return None
-
+    def subir_video_a_host_temporal(self, ruta_video: Path) -> Optional[str]:
+        """
+        Sube temporalmente el vídeo a un servidor público gratuito (tmpfiles.org)
+        para obtener la URL pública exigida oficialmente por Meta para Trial Reels.
+        """
+        try:
+            logger.info("☁️ Generando URL pública temporal para Trial Reel (tmpfiles.org)...")
+            with open(ruta_video, "rb") as f:
+                r = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=60)
+                if r.status_code == 200:
+                    data = r.json()
+                    if data.get("status") == "success" and "data" in data and "url" in data.get("data", {}):
+                        page_url = data["data"]["url"]
+                        dl_url = page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+                        logger.info("   ✅ URL pública creada: %s", dl_url)
+                        return dl_url
+        except Exception as e:
+            logger.error("   ❌ Error generando URL pública temporal: %s", e)
+        return None
 
     def crear_contenedor_trial_reel(
         self,
@@ -1406,12 +1405,12 @@ def subir_video_a_host_temporal(ruta_video: Path) -> Optional[str]:
     ) -> Optional[str]:
         """
         Flujo completo para publicar un Reel. Si PUBLICAR_COMO_REEL_DE_PRUEBA es True,
-        sigue estrictamente la especificación cURL de la documentación oficial de Meta.
+        sigue strictly la especificación cURL de la documentación oficial de Meta.
         """
         logger.info("\n🎬 === PUBLICANDO REEL (subida a Meta) ===")
 
         if PUBLICAR_COMO_REEL_DE_PRUEBA:
-            url_temp = subir_video_a_host_temporal(ruta_video)
+            url_temp = self.subir_video_a_host_temporal(ruta_video)
             if url_temp:
                 contenedor_id = self.crear_contenedor_trial_reel(url_temp, caption)
                 if contenedor_id and self.esperar_contenedor_listo(contenedor_id):
