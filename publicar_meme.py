@@ -1328,6 +1328,76 @@ class SubidaResumibleMeta:
         logger.error("   ❌ Error al publicar el contenedor.")
         return None
 
+def subir_video_a_host_temporal(ruta_video: Path) -> Optional[str]:
+    """
+    Sube temporalmente el vídeo a un servidor público gratuito (tmpfiles.org)
+    para obtener la URL pública exigida oficialmente por Meta para Trial Reels.
+    """
+    try:
+        logger.info("☁️ Generando URL pública temporal para Trial Reel (tmpfiles.org)...")
+        with open(ruta_video, "rb") as f:
+            r = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=60)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("status") == "success" and "data" in data and "url" in data.get("data", {}):
+                    page_url = data["data"]["url"]
+                    dl_url = page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+                    logger.info("   ✅ URL pública creada: %s", dl_url)
+                    return dl_url
+    except Exception as e:
+        logger.error("   ❌ Error generando URL pública temporal: %s", e)
+    return None
+
+
+    def crear_contenedor_trial_reel(
+        self,
+        video_url: str,
+        caption: str = "",
+    ) -> Optional[str]:
+        """
+        Crea un contenedor de Reel de Prueba (Trial Reel) siguiendo exactamente la estructura oficial de Meta:
+        POST https://graph.instagram.com/v20.0/{ig_user_id}/media
+        Headers: Content-Type: application/json
+        Body:
+        {
+          "media_type": "REELS",
+          "video_url": "...",
+          "caption": "...",
+          "trial_params": {
+            "graduation_strategy": "MANUAL"
+          }
+        }
+        """
+        logger.info("📦 Creando contenedor de Reel de Prueba vía graph.instagram.com (JSON)...")
+        url = f"https://graph.instagram.com/{META_API_VERSION}/{self.account_id}/media"
+        params = {"access_token": self.token}
+        headers = {"Content-Type": "application/json"}
+
+        payload = {
+            "media_type": "REELS",
+            "video_url": video_url,
+            "trial_params": {
+                "graduation_strategy": ESTRATEGIA_GRADUACION_REEL_PRUEBA
+            }
+        }
+        if caption:
+            payload["caption"] = caption
+
+        try:
+            resp = requests.post(url, params=params, json=payload, headers=headers, timeout=60)
+            datos_resp = resp.json()
+
+            if "id" in datos_resp:
+                contenedor_id = datos_resp["id"]
+                logger.info("   ✅ Contenedor de Trial Reel creado exitosamente: %s", contenedor_id)
+                return contenedor_id
+            elif "error" in datos_resp:
+                err = datos_resp["error"]
+                logger.error("   ❌ Error Meta Graph API Trial Reel [%s]: %s", err.get("type", "?"), err.get("message", "?"))
+        except Exception as e:
+            logger.error("   ❌ Error de red al crear Trial Reel: %s", e)
+        return None
+
     def publicar_reel_desde_archivo(
         self,
         ruta_video: Path,
@@ -1335,26 +1405,20 @@ class SubidaResumibleMeta:
         max_reintentos: int = 3,
     ) -> Optional[str]:
         """
-        Flujo completo para publicar un Reel directamente desde archivo local.
-
-        No requiere ningún hosting externo. El video va directamente
-        del disco del runner a los servidores de Meta.
-
-        Pasos:
-            1. Crear contenedor con upload_type=resumable
-            2. Subir binario a rupload.facebook.com
-            3. Esperar procesamiento (polling)
-            4. Publicar
-
-        Args:
-            ruta_video: Ruta al archivo de video local (MP4 sanitizado).
-            caption: Texto del caption del Reel.
-            max_reintentos: Número máximo de intentos.
-
-        Retorna:
-            str | None: Media ID del Reel publicado.
+        Flujo completo para publicar un Reel. Si PUBLICAR_COMO_REEL_DE_PRUEBA es True,
+        sigue estrictamente la especificación cURL de la documentación oficial de Meta.
         """
-        logger.info("\n🎬 === PUBLICANDO REEL (subida directa a Meta) ===")
+        logger.info("\n🎬 === PUBLICANDO REEL (subida a Meta) ===")
+
+        if PUBLICAR_COMO_REEL_DE_PRUEBA:
+            url_temp = subir_video_a_host_temporal(ruta_video)
+            if url_temp:
+                contenedor_id = self.crear_contenedor_trial_reel(url_temp, caption)
+                if contenedor_id and self.esperar_contenedor_listo(contenedor_id):
+                    media_id = self.publicar_contenedor(contenedor_id)
+                    if media_id:
+                        return media_id
+            logger.warning("   ⚠️ No se pudo publicar por el flujo de Trial Reel oficial, intentando fallback resumable...")
 
         for intento in range(1, max_reintentos + 1):
             if intento > 1:
