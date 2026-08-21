@@ -1354,8 +1354,8 @@ class SubidaResumibleMeta:
         caption: str = "",
     ) -> Optional[str]:
         """
-        Crea un contenedor de Reel de Prueba (Trial Reel) siguiendo exactamente la estructura oficial de Meta:
-        POST https://graph.instagram.com/v20.0/{ig_user_id}/media
+        Crea un contenedor de Reel de Prueba (Trial Reel) siguiendo la llamada verificada:
+        POST https://graph.facebook.com/v20.0/{ig_user_id}/media?access_token={token}
         Headers: Content-Type: application/json
         Body:
         {
@@ -1367,8 +1367,8 @@ class SubidaResumibleMeta:
           }
         }
         """
-        logger.info("📦 Creando contenedor de Reel de Prueba vía graph.instagram.com (JSON)...")
-        url = f"https://graph.instagram.com/{META_API_VERSION}/{self.account_id}/media"
+        logger.info("📦 Creando contenedor de Reel de Prueba vía Meta Graph API (JSON)...")
+        url = f"{META_GRAPH_BASE}/{self.account_id}/media"
         params = {"access_token": self.token}
         headers = {"Content-Type": "application/json"}
 
