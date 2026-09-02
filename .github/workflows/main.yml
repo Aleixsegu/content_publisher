@@ -55,6 +55,8 @@ permissions:
 jobs:
   publicar-memes:
     name: "Descubrir → Procesar → Publicar"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
     services:
       flaresolverr:
         image: ghcr.io/flaresolverr/flaresolverr:latest
