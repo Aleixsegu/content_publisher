@@ -15,8 +15,5 @@ yt-dlp>=2024.1.1
 # Cliente HTTP para llamadas a la API de Meta Graph y rupload.facebook.com
 requests>=2.31.0,<3.0.0
 
-# Suplantación de huella digital TLS de navegador Chrome para evitar bloqueos 403
-curl-cffi>=0.7.0
-
 # Manejo de zonas horarias (CET/CEST para publicación a las 18:00 Madrid)
 pytz>=2024.1

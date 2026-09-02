@@ -55,8 +55,11 @@ permissions:
 jobs:
   publicar-memes:
     name: "Descubrir → Procesar → Publicar"
-    runs-on: ubuntu-24.04
-    timeout-minutes: 350  # 5h 50min máximo (cubre espera de invierno + 4 Stories)
+    services:
+      flaresolverr:
+        image: ghcr.io/flaresolverr/flaresolverr:latest
+        ports:
+          - 8191:8191
 
     steps:
       # ── Paso 1: Obtener el código ─────────────────────────────────────
