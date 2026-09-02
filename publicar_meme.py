@@ -300,25 +300,27 @@ class ClienteTikTok:
         try:
             fs_url = "http://localhost:8191/v1"
             import urllib.parse
-            post_str = f"keywords={urllib.parse.quote(keywords)}&count={count}&cursor={cursor}&web=1"
+            target_url = f"https://www.tikwm.com/api/feed/search?keywords={urllib.parse.quote(keywords)}&count={count}&cursor={cursor}&web=1"
             fs_payload = {
-                "cmd": "request.post",
-                "url": url,
-                "postData": post_str,
-                "headers": {"Content-Type": "application/x-www-form-urlencoded"}
+                "cmd": "request.get",
+                "url": target_url,
+                "maxTimeout": 60000
             }
-            res_fs = requests.post(fs_url, json=fs_payload, timeout=12)
+            res_fs = requests.post(fs_url, json=fs_payload, timeout=45)
             if res_fs.status_code == 200:
                 fs_json = res_fs.json()
                 solution = fs_json.get("solution", {}).get("response", "")
                 if solution:
-                    data = json.loads(solution)
+                    json_match = re.search(r'\{.*"code"\s*:\s*\d+.*\}', solution, re.DOTALL)
+                    raw_json = json_match.group(0) if json_match else solution
+                    data = json.loads(raw_json)
                     if data.get("code") == 0 and "data" in data:
                         videos = data["data"].get("videos", [])
                         if videos:
+                            logger.info("   ✅ %d vídeos obtenidos via FlareSolverr", len(videos))
                             return videos
         except Exception as e:
-            logger.debug("FlareSolverr no disponible: %s", e)
+            logger.debug("FlareSolverr error: %s", e)
 
         # 3. Petición vía capa de proxies HTTP si las anteriores fallan
         try:
