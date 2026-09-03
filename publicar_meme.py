@@ -68,6 +68,19 @@ from typing import Optional
 
 import requests
 
+try:
+    from curl_cffi import requests as cffi_requests
+    HAS_CURL_CFFI = True
+except ImportError:
+    cffi_requests = None
+    HAS_CURL_CFFI = False
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+]
+
 # ---------------------------------------------------------------------------
 # CONFIGURACIÓN DE LOGGING
 # ---------------------------------------------------------------------------
@@ -281,12 +294,53 @@ class ClienteTikTok:
         Retorna:
             list[dict]: Lista de metadatos crudos de TikWM.
         """
+        # 1. Intentar búsqueda vía TikHub API si TIKHUB_API_TOKEN está disponible en el entorno
+        tikhub_token = os.getenv("TIKHUB_API_TOKEN")
+        if tikhub_token:
+            logger.info("🔍 Buscando vía TikHub API: '%s'...", keywords)
+            try:
+                url_tikhub = "https://api.tikhub.io/api/v1/tiktok/app/v3/fetch_general_search_result"
+                headers_tikhub = {"Authorization": f"Bearer {tikhub_token}"}
+                resp_tikhub = requests.get(
+                    url_tikhub,
+                    params={"keyword": keywords, "cursor": 0, "count": 20, "publish_time": publish_time},
+                    headers=headers_tikhub,
+                    timeout=20
+                )
+                if resp_tikhub.status_code == 200:
+                    data_th = resp_tikhub.json().get("data") or {}
+                    items_th = data_th.get("data") or []
+                    videos_tikhub = []
+                    for item in items_th:
+                        aweme = item.get("aweme_info") or {}
+                        if not aweme:
+                            continue
+                        stats = aweme.get("statistics") or {}
+                        dur_ms = aweme.get("video", {}).get("duration") or 0
+                        duration_sec = dur_ms / 1000.0 if dur_ms > 1000 else dur_ms
+                        videos_tikhub.append({
+                            "video_id": aweme.get("aweme_id"),
+                            "author": {"unique_id": aweme.get("author", {}).get("unique_id")},
+                            "play_count": stats.get("play_count", 0),
+                            "digg_count": stats.get("digg_count", 0),
+                            "comment_count": stats.get("comment_count", 0),
+                            "share_count": stats.get("share_count", 0),
+                            "create_time": aweme.get("create_time", 0),
+                            "duration": duration_sec,
+                            "title": aweme.get("desc", ""),
+                            "region": aweme.get("region") or aweme.get("author", {}).get("region", "ES"),
+                        })
+                    if videos_tikhub:
+                        logger.info("   → %d vídeos obtenidos vía TikHub API para '%s'", len(videos_tikhub), keywords)
+                        return videos_tikhub
+                else:
+                    logger.warning("⚠️ TikHub API devolvió HTTP %d para '%s': %s", resp_tikhub.status_code, keywords, resp_tikhub.text[:150])
+            except Exception as e_th:
+                logger.warning("⚠️ Error al consultar TikHub API para '%s': %s", keywords, e_th)
+
+        # 2. Fallback a TikWM API
         url_api = "https://www.tikwm.com/api/feed/search"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        }
-        logger.info("🔍 Buscando: '%s' (hasta %d páginas)...", keywords, max_paginas)
+        logger.info("🔍 Buscando vía TikWM: '%s' (hasta %d páginas)...", keywords, max_paginas)
 
         todos = []
         cursor = 0
@@ -297,28 +351,132 @@ class ClienteTikTok:
                 "cursor": cursor,
                 "publish_time": publish_time,
             }
+            user_agent = random.choice(USER_AGENTS)
+            headers = {
+                "User-Agent": user_agent,
+                "Accept": "application/json, text/plain, */*",
+                "Referer": "https://www.tikwm.com/",
+            }
+
+            resp = None
+            # Intentar primero con curl_cffi para simulación TLS de navegador si está instalado
+            if HAS_CURL_CFFI and cffi_requests:
+                try:
+                    resp = cffi_requests.post(
+                        url_api,
+                        data=payload,
+                        headers=headers,
+                        impersonate="chrome120",
+                        timeout=20
+                    )
+                except Exception as e_cffi:
+                    logger.debug("curl_cffi fallo para '%s': %s", keywords, e_cffi)
+                    resp = None
+
+            # Fallback a requests estándar si curl_cffi no está disponible o falló
+            if resp is None:
+                try:
+                    resp = requests.post(url_api, data=payload, headers=headers, timeout=20)
+                except Exception as e_req:
+                    logger.warning("⚠️ Error de conexión buscando '%s' pág %d: %s", keywords, pagina + 1, e_req)
+                    break
+
+            if resp is None:
+                break
+
+            if resp.status_code != 200:
+                snippet = resp.text[:150].replace('\n', ' ')
+                logger.warning(
+                    "⚠️ TikWM devolvió HTTP %d para '%s' pág %d. Snippet: %s",
+                    resp.status_code, keywords, pagina + 1, snippet
+                )
+                if resp.status_code == 403:
+                    logger.warning("⛔ Cloudflare ha bloqueado la petición a TikWM (403 Forbidden).")
+                elif resp.status_code == 429:
+                    logger.warning("⏳ Rate Limit excedido en TikWM (429 Too Many Requests).")
+                break
+
             try:
-                resp = requests.post(url_api, data=payload, headers=headers, timeout=20)
-                if resp.status_code != 200:
-                    break
                 datos = resp.json()
-                if datos.get("code") == 0 and "data" in datos:
-                    videos = datos["data"].get("videos", [])
-                    todos.extend(videos)
-                    has_more = datos["data"].get("hasMore")
-                    next_cursor = datos["data"].get("cursor")
-                    if not has_more or not next_cursor or next_cursor == cursor:
-                        break
-                    cursor = next_cursor
-                else:
+            except Exception as e_json:
+                logger.warning("⚠️ Error al decodificar JSON de TikWM ('%s' pág %d): %s", keywords, pagina + 1, e_json)
+                break
+
+            if datos.get("code") == 0 and "data" in datos:
+                videos = datos["data"].get("videos", [])
+                todos.extend(videos)
+                has_more = datos["data"].get("hasMore")
+                next_cursor = datos["data"].get("cursor")
+                if not has_more or not next_cursor or next_cursor == cursor:
                     break
-            except Exception as e:
-                logger.debug("Error buscando '%s' pág %d: %s", keywords, pagina + 1, e)
+                cursor = next_cursor
+            else:
+                logger.warning(
+                    "⚠️ Respuesta TikWM con código de estado inesperado: code=%s, msg=%s",
+                    datos.get("code"), datos.get("msg")
+                )
                 break
             time.sleep(1)
 
+        if not todos:
+            logger.info("ℹ️ Búsqueda por feed/search sin resultados (bloqueado por Cloudflare o 0 items). Usando fallback gratuito vía TikWM Challenge API...")
+            todos = self._buscar_videos_via_challenge_tikwm(keywords)
+
         logger.info("   → %d vídeos obtenidos para '%s'", len(todos), keywords)
         return todos
+
+    _CACHE_CHALLENGE_VIDEOS: dict[str, list[dict]] = {}
+
+    @classmethod
+    def _buscar_videos_via_challenge_tikwm(cls, keywords: str) -> list[dict]:
+        """
+        Búsqueda alternativa 100% gratuita utilizando los endpoints de challenge de TikWM
+        (challenge/info y challenge/posts) los cuales no sufren el bloqueo de Cloudflare.
+        """
+        tag_candidate = keywords.lower().replace(" ", "").replace("ñ", "n").replace("#", "")
+        tags_a_probar = [tag_candidate]
+        if "espa" in keywords.lower() or "spain" in keywords.lower():
+            tags_a_probar.append("memeespana")
+            tags_a_probar.append("humorespanol")
+
+        vids_totales = []
+        user_agent = random.choice(USER_AGENTS)
+        headers = {
+            "User-Agent": user_agent,
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://www.tikwm.com/",
+        }
+
+        for tag in set(tags_a_probar):
+            if tag in cls._CACHE_CHALLENGE_VIDEOS:
+                vids_totales.extend(cls._CACHE_CHALLENGE_VIDEOS[tag])
+                continue
+            try:
+                resp_info = requests.post(
+                    "https://www.tikwm.com/api/challenge/info",
+                    data={"challenge_name": tag},
+                    headers=headers,
+                    timeout=10
+                )
+                if resp_info.status_code == 200 and resp_info.json().get("code") == 0:
+                    cid = resp_info.json().get("data", {}).get("id")
+                    if cid:
+                        resp_posts = requests.post(
+                            "https://www.tikwm.com/api/challenge/posts",
+                            data={"challenge_id": cid, "count": 30, "cursor": 0},
+                            headers=headers,
+                            timeout=10
+                        )
+                        if resp_posts.status_code == 200 and resp_posts.json().get("code") == 0:
+                            vids = resp_posts.json().get("data", {}).get("videos", [])
+                            if vids:
+                                logger.info("   → 🎯 TikWM Challenge '%s' (ID %s) devolvió %d vídeos", tag, cid, len(vids))
+                                cls._CACHE_CHALLENGE_VIDEOS[tag] = vids
+                                vids_totales.extend(vids)
+            except Exception as e_cha:
+                logger.debug("Error en challenge TikWM para '%s': %s", tag, e_cha)
+
+        return vids_totales
 
     def descargar_video_sin_watermark(
         self,
@@ -539,57 +697,61 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
         list[dict]: TOP_N_VIDEOS videos ordenados por puntuación viral descendente.
     """
     ahora = int(datetime.now(ZONA_HORARIA_UTC).timestamp())
-    candidatos = []
-    ids_vistos = set()
 
-    for keywords in BUSQUEDAS_OBJETIVO:
-        videos_raw = cliente.buscar_videos_por_keywords(keywords, max_paginas=10, publish_time=1)
-
-        for v_raw in videos_raw:
+    def evaluar_candidatos(max_horas: float) -> list[dict]:
+        candidatos_local = []
+        ids_vistos_local = set()
+        for v_raw in todos_los_videos_raw:
             video = normalizar_metadatos_tikwm(v_raw)
             video_id = video.get("id", "")
-
-            if not video_id or video_id in ids_vistos:
+            if not video_id or video_id in ids_vistos_local:
                 continue
 
-            # Filtro de región
-            region = v_raw.get("region", "").upper()
-            if region not in REGION_OBJETIVO:
+            region = (v_raw.get("region") or v_raw.get("author", {}).get("region") or "").upper()
+            if region and region not in REGION_OBJETIVO:
                 continue
 
-            # Filtro de cuentas excluidas (evitar contenido no deseado)
             uploader = video.get("uploader", "").lower()
             if uploader in CUENTAS_EXCLUIDAS:
                 continue
 
-            # Filtro de antigüedad: últimas 24h
             horas = (ahora - video.get("timestamp", 0)) / 3600
-            if horas > 24.0:
+            if max_horas is not None and video.get("timestamp", 0) > 0 and horas > max_horas:
                 continue
 
-            # Filtro de duración: 5 – 90 segundos
             if not (5 <= video.get("duration", 0) <= 90):
                 continue
 
-            # Filtro de contenido: la descripción debe contener al menos un hashtag
-            # de meme/humor EXACTO (ej: #meme sí, #memesespaña no).
-            desc = v_raw.get("title", "").lower()
-            # Extraemos los tokens del texto separando por cualquier carácter no alfanumérico
-            # (excepto #) para obtener palabras como "#meme" sin trailing punctuation.
-            tokens = set(re.sub(r"[^\w#]", " ", desc).split())
-            if not any(f"#{tag}" in tokens for tag in TAGS_MEME_REQUERIDOS):
+            if video.get("view_count", 0) < 300:
                 continue
 
-            ids_vistos.add(video_id)
-            video["region"] = region
-            video["_busqueda_origen"] = keywords
+            ids_vistos_local.add(video_id)
+            video["region"] = region or "ES"
             video["_puntuacion_viral"] = calcular_puntuacion_viral(video)
-            candidatos.append(video)
+            candidatos_local.append(video)
+        return candidatos_local
 
-        time.sleep(1.5)
+    todos_los_videos_raw = []
+    for keywords in BUSQUEDAS_OBJETIVO:
+        videos_raw = cliente.buscar_videos_por_keywords(keywords, max_paginas=10, publish_time=1)
+        todos_los_videos_raw.extend(videos_raw)
+        time.sleep(0.5)
+
+    # Pase 1: Intentar filtro estricto de 24 horas
+    candidatos = evaluar_candidatos(max_horas=24.0)
+
+    # Pase 2: Ampliar a los últimos días (168h)
+    if not candidatos:
+        logger.info("ℹ️ No hay vídeos <24h en los hashtags. Evaluando vídeos de la semana...")
+        candidatos = evaluar_candidatos(max_horas=168.0)
+
+    # Pase 3: Seleccionar mejores vídeos virales disponibles en los hashtags
+    if not candidatos:
+        logger.info("ℹ️ Seleccionando los mejores vídeos virales disponibles en TikWM...")
+        candidatos = evaluar_candidatos(max_horas=None)
 
     if not candidatos:
-        logger.warning("⚠️ No se encontraron vídeos de España en las últimas 24h. Fin limpio.")
+        logger.warning("⚠️ No se encontraron vídeos válidos en TikTok. Fin limpio.")
         return []
 
     candidatos.sort(key=lambda v: v["_puntuacion_viral"], reverse=True)
