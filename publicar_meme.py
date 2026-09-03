@@ -102,7 +102,7 @@ BUSQUEDAS_OBJETIVO = [
 ]
 
 # Región objetivo para filtrar resultados
-REGION_OBJETIVO = {"ES", "es", ""}
+REGION_OBJETIVO = {"ES"}
 
 # Cuentas de TikTok excluidas (no se seleccionarán sus videos)
 CUENTAS_EXCLUIDAS = {"failets", "lobostroy", "el.borov.memes", "vristok", "always.hansineta", "ekaitz.rguezz", "papigavitv", "presentacionazas",
@@ -119,7 +119,7 @@ CUENTAS_EXCLUIDAS = {"failets", "lobostroy", "el.borov.memes", "vristok", "alway
 # Garantiza que el contenido sea efectivamente un meme o humor, y no un vídeo
 # cualquiera que solo mencione "españa" junto a la palabra meme de pasada.
 TAGS_MEME_REQUERIDOS = {
-    "meme", "memes", "gracioso",
+    "meme", "memes", "humor", "gracioso", "momazo", "shitpost",
 }
 
 # Número de videos a seleccionar para publicación
@@ -140,13 +140,12 @@ INTERVALO_STORIES_SEGUNDOS = 70 * 60
 TIMEOUT_CONTENEDOR_META = 300   # 5 minutos
 INTERVALO_POLLING_META = 15     # Verificar cada 15 segundos
 
-# Configuración Meta API / Instagram
-META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN", "").strip()
-INSTAGRAM_ACCOUNT_ID = os.getenv("INSTAGRAM_ACCOUNT_ID", "").strip()
-META_GRAPH_VERSION = "v20.0"
-META_GRAPH_BASE = f"https://graph.facebook.com/{META_GRAPH_VERSION}"
-ESTRATEGIA_GRADUACION_REEL_PRUEBA = os.getenv("ESTRATEGIA_GRADUACION_REEL_PRUEBA", "MANUAL")
+# Versión de la API de Meta Graph a utilizar
+META_API_VERSION = "v20.0"
 
+# Host para subida de videos directa a Meta
+META_RUPLOAD_HOST = "https://rupload.facebook.com"
+META_GRAPH_BASE = f"https://graph.facebook.com/{META_API_VERSION}"
 
 ZONA_HORARIA_UTC = timezone.utc
 
@@ -264,148 +263,62 @@ class ClienteTikTok:
 
         return args
 
-    def _buscar_tikwm_api(self, keywords: str, count: int = 20, cursor: int = 0) -> list[dict]:
+    def buscar_videos_por_keywords(
+        self,
+        keywords: str,
+        max_paginas: int = 10,
+        publish_time: int = 1
+    ) -> list[dict]:
         """
-        Consulta la API nativa de TikWM.
-        Soporta llamado directo, capa de proxy rotativo HTTP/HTTPS y FlareSolverr.
-        """
-        try:
-            from curl_cffi import requests as c_requests
-        except ImportError:
-            c_requests = requests
+        Busca vídeos en TikTok usando palabras clave (ej: "meme españa") paginando
+        hasta max_paginas páginas de resultados.
 
-        url = "https://www.tikwm.com/api/feed/search"
-        payload = {"keywords": keywords, "count": count, "cursor": cursor, "web": 1}
+        Args:
+            keywords: Términos de búsqueda (ej: "meme españa").
+            max_paginas: Número máximo de páginas a consultar (30 vídeos/página).
+            publish_time: Ventana de tiempo de la API (1=últimas 24h, 7=última semana).
+
+        Retorna:
+            list[dict]: Lista de metadatos crudos de TikWM.
+        """
+        url_api = "https://www.tikwm.com/api/feed/search"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/javascript, */*; q=0.01",
-            "Origin": "https://www.tikwm.com",
-            "Referer": "https://www.tikwm.com/",
-            "X-Requested-With": "XMLHttpRequest"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
+        logger.info("🔍 Buscando: '%s' (hasta %d páginas)...", keywords, max_paginas)
 
-        # 1. Petición Directa con impersonate Chrome 120
-        try:
-            r = c_requests.post(url, data=payload, headers=headers, impersonate="chrome120", timeout=10)
-            if r.status_code == 200:
-                res_data = r.json()
-                if res_data.get("code") == 0 and "data" in res_data:
-                    videos = res_data["data"].get("videos", [])
-                    if videos:
-                        return videos
-        except Exception as e:
-            logger.debug("TikWM directo falló: %s", e)
-
-        # 2. Petición vía FlareSolverr (para bypass Cloudflare 403 en GitHub Actions)
-        try:
-            fs_url = "http://localhost:8191/v1"
-            import urllib.parse
-            target_url = f"https://www.tikwm.com/api/feed/search?keywords={urllib.parse.quote(keywords)}&count={count}&cursor={cursor}&web=1"
-            fs_payload = {
-                "cmd": "request.get",
-                "url": target_url,
-                "maxTimeout": 60000
-            }
-            res_fs = requests.post(fs_url, json=fs_payload, timeout=45)
-            if res_fs.status_code == 200:
-                fs_json = res_fs.json()
-                solution = fs_json.get("solution", {}).get("response", "")
-                if solution:
-                    json_match = re.search(r'\{.*"code"\s*:\s*\d+.*\}', solution, re.DOTALL)
-                    raw_json = json_match.group(0) if json_match else solution
-                    data = json.loads(raw_json)
-                    if data.get("code") == 0 and "data" in data:
-                        videos = data["data"].get("videos", [])
-                        if videos:
-                            logger.info("   ✅ %d vídeos obtenidos via FlareSolverr", len(videos))
-                            return videos
-        except Exception as e:
-            logger.debug("FlareSolverr error: %s", e)
-
-        # 3. Petición vía capa de proxies HTTP si las anteriores fallan
-        try:
-            proxy_env = os.getenv("TIKWM_PROXY_URL", "").strip()
-            if proxy_env:
-                proxies = {"http": proxy_env, "https": proxy_env}
-                r = c_requests.post(url, data=payload, headers=headers, impersonate="chrome120", proxies=proxies, timeout=12)
-                if r.status_code == 200:
-                    res_data = r.json()
-                    if res_data.get("code") == 0 and "data" in res_data:
-                        return res_data["data"].get("videos", [])
-        except Exception as e:
-            logger.debug("Proxy TikWM falló: %s", e)
-
-        return []
-
-    def buscar_videos(self, keywords: str, paginas_max: int = 2) -> list[dict]:
-        """
-        Busca vídeos utilizando la API de TikWM con soporte de proxy y FlareSolverr.
-        """
         todos = []
         cursor = 0
-        for pagina in range(paginas_max):
-            videos = self._buscar_tikwm_api(keywords, count=30, cursor=cursor)
-            if not videos:
+        for pagina in range(max_paginas):
+            payload = {
+                "keywords": keywords,
+                "count": 30,
+                "cursor": cursor,
+                "publish_time": publish_time,
+            }
+            try:
+                resp = requests.post(url_api, data=payload, headers=headers, timeout=20)
+                if resp.status_code != 200:
+                    break
+                datos = resp.json()
+                if datos.get("code") == 0 and "data" in datos:
+                    videos = datos["data"].get("videos", [])
+                    todos.extend(videos)
+                    has_more = datos["data"].get("hasMore")
+                    next_cursor = datos["data"].get("cursor")
+                    if not has_more or not next_cursor or next_cursor == cursor:
+                        break
+                    cursor = next_cursor
+                else:
+                    break
+            except Exception as e:
+                logger.debug("Error buscando '%s' pág %d: %s", keywords, pagina + 1, e)
                 break
-            todos.extend(videos)
-            cursor += len(videos)
             time.sleep(1)
 
         logger.info("   → %d vídeos obtenidos para '%s'", len(todos), keywords)
         return todos
-
-    def _buscar_urlebird_fallback(self, keywords: str) -> list[dict]:
-        """
-        Respaldo secundario si TikWM está temporalmente bloqueado localmente.
-        """
-        try:
-            from curl_cffi import requests as c_requests
-            import urllib.parse
-            url = "https://urlebird.com/search/?q=" + urllib.parse.quote(keywords)
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-            r = c_requests.get(url, impersonate="chrome120", headers=headers, timeout=10)
-            if r.status_code == 200:
-                user_links = re.findall(r'href="https://urlebird\.com/user/([^/"]+)/"', r.text)
-                v_ids = re.findall(r'href="https://urlebird\.com/video/[^"]*-(\d+)/"', r.text)
-                res = []
-                import time as _t
-                for u, vid_id in zip(user_links, v_ids):
-                    u_clean = u.lower().strip()
-                    res.append({
-                        "video_id": vid_id,
-                        "title": f"#meme #memes por @{u_clean}",
-                        "create_time": int(_t.time()) - 3600,
-                        "region": "ES",
-                        "author": {"unique_id": u_clean},
-                        "play_count": 5000,
-                        "digg_count": 500,
-                        "share_count": 100,
-                        "duration": 15
-                    })
-                return res
-        except Exception as e:
-            logger.debug("Fallback Urlebird error: %s", e)
-        return []
-
-    def buscar_pagina_videos(
-        self,
-        keywords: str,
-        cursor: int = 0,
-        publish_time: int = 1
-    ) -> tuple[list[dict], int, bool]:
-        """
-        Busca una sola página de vídeos utilizando la API de TikWM con fallback automático.
-        """
-        videos = self._buscar_tikwm_api(keywords, count=30, cursor=cursor)
-        if videos:
-            next_cursor = cursor + len(videos)
-            return videos, next_cursor, True
-            
-        videos_fb = self._buscar_urlebird_fallback(keywords)
-        if videos_fb:
-            return videos_fb, cursor + len(videos_fb), True
-
-        return [], cursor, False
 
     def descargar_video_sin_watermark(
         self,
@@ -609,12 +522,8 @@ def es_video_valido(video: dict) -> bool:
 def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
     """
     Busca vídeos de memes de España usando palabras clave ("meme españa", etc.),
-    recorriendo de forma paginada y en bucle todas las búsquedas configuradas
-    para recopilar al menos 5 candidatos válidos.
-
-    El bucle solicita secuencialmente la página N de cada palabra clave,
-    filtra los videos y, si todavía no tiene 5, avanza a la página N+1.
-    Se detiene inmediatamente al alcanzar el mínimo de 5 videos válidos.
+    recorriendo todas las búsquedas configuradas y recopilando todos los candidatos
+    válidos posibles para maximizar la muestra y elegir el mejor TOP N.
 
     Criterios de validez:
     - Región: ES (España)
@@ -633,89 +542,54 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
     candidatos = []
     ids_vistos = set()
 
-    # Mantenemos el estado de paginación (cursor y si hay más contenido) para cada palabra clave
-    estado_busquedas = {
-        kw: {"cursor": 0, "has_more": True}
-        for kw in BUSQUEDAS_OBJETIVO
-    }
+    for keywords in BUSQUEDAS_OBJETIVO:
+        videos_raw = cliente.buscar_videos_por_keywords(keywords, max_paginas=10, publish_time=1)
 
-    pagina = 1
-    MAX_PAGINAS_TOTAL = 15  # Límite de seguridad para evitar bucles infinitos
+        for v_raw in videos_raw:
+            video = normalizar_metadatos_tikwm(v_raw)
+            video_id = video.get("id", "")
 
-    while len(candidatos) < TOP_N_VIDEOS and pagina <= MAX_PAGINAS_TOTAL:
-        logger.info("📡 [Página %d] Buscando candidatos en TikTok...", pagina)
-        alguna_busqueda_activa = False
-
-        for keywords in BUSQUEDAS_OBJETIVO:
-            if len(candidatos) >= TOP_N_VIDEOS:
-                break
-
-            estado = estado_busquedas[keywords]
-            if not estado["has_more"]:
+            if not video_id or video_id in ids_vistos:
                 continue
 
-            alguna_busqueda_activa = True
-            videos_raw, next_cursor, has_more = cliente.buscar_pagina_videos(
-                keywords, cursor=estado["cursor"], publish_time=1
-            )
+            # Filtro de región
+            region = v_raw.get("region", "").upper()
+            if region not in REGION_OBJETIVO:
+                continue
 
-            # Actualizamos el cursor y si hay más páginas disponibles para esta búsqueda
-            estado["cursor"] = next_cursor
-            estado["has_more"] = has_more
+            # Filtro de cuentas excluidas (evitar contenido no deseado)
+            uploader = video.get("uploader", "").lower()
+            if uploader in CUENTAS_EXCLUIDAS:
+                continue
 
-            for v_raw in videos_raw:
-                video = normalizar_metadatos_tikwm(v_raw)
-                video["_kw_origen"] = keywords
-                video["busqueda_origen"] = keywords
-                video_id = video.get("id", "")
+            # Filtro de antigüedad: últimas 24h
+            horas = (ahora - video.get("timestamp", 0)) / 3600
+            if horas > 24.0:
+                continue
 
-                if not video_id or video_id in ids_vistos:
-                    continue
+            # Filtro de duración: 5 – 90 segundos
+            if not (5 <= video.get("duration", 0) <= 90):
+                continue
 
-                # Filtro de región
-                region = v_raw.get("region", "").upper()
-                if region not in REGION_OBJETIVO:
-                    continue
+            # Filtro de contenido: la descripción debe contener al menos un hashtag
+            # de meme/humor EXACTO (ej: #meme sí, #memesespaña no).
+            desc = v_raw.get("title", "").lower()
+            # Extraemos los tokens del texto separando por cualquier carácter no alfanumérico
+            # (excepto #) para obtener palabras como "#meme" sin trailing punctuation.
+            tokens = set(re.sub(r"[^\w#]", " ", desc).split())
+            if not any(f"#{tag}" in tokens for tag in TAGS_MEME_REQUERIDOS):
+                continue
 
-                # Filtro de cuentas excluidas (evitar contenido no deseado)
-                uploader = video.get("uploader", "").lower()
-                if uploader in CUENTAS_EXCLUIDAS:
-                    continue
+            ids_vistos.add(video_id)
+            video["region"] = region
+            video["_busqueda_origen"] = keywords
+            video["_puntuacion_viral"] = calcular_puntuacion_viral(video)
+            candidatos.append(video)
 
-                # Filtro de antigüedad: últimas 24h
-                horas = (ahora - video.get("timestamp", 0)) / 3600
-                if horas > 24.0:
-                    continue
-
-                # Filtro de duración: 5 – 90 segundos
-                if not (5 <= video.get("duration", 0) <= 90):
-                    continue
-
-                # Filtro de contenido: la descripción debe contener al menos un hashtag
-                # de meme/humor EXACTO (ej: #meme sí, #memesespaña no).
-                desc = (v_raw.get("title", "") or "").lower()
-                tokens = set(re.sub(r"[^\w#]", " ", desc).split())
-                if not any(f"#{tag}" in tokens or tag in tokens for tag in TAGS_MEME_REQUERIDOS):
-                    continue
-
-                ids_vistos.add(video_id)
-                video["region"] = region
-                video["_busqueda_origen"] = keywords
-                video["_puntuacion_viral"] = calcular_puntuacion_viral(video)
-                candidatos.append(video)
-
-            # Pequeño retardo entre peticiones para evitar bloqueos
-            time.sleep(1.5)
-
-        # Si todas las palabras clave se han quedado sin páginas de resultados, rompemos el bucle
-        if not alguna_busqueda_activa:
-            logger.info("ℹ️ No hay más páginas disponibles para ninguna de las palabras clave en TikTok.")
-            break
-
-        pagina += 1
+        time.sleep(1.5)
 
     if not candidatos:
-        logger.warning("⚠️ No se encontraron vídeos de España que pasen todos los filtros. Fin limpio.")
+        logger.warning("⚠️ No se encontraron vídeos de España en las últimas 24h. Fin limpio.")
         return []
 
     candidatos.sort(key=lambda v: v["_puntuacion_viral"], reverse=True)
@@ -758,7 +632,7 @@ def sanitizar_video_con_ffmpeg(
 
     Técnicas aplicadas para evadir la detección de contenido duplicado:
     1. Re-encode completo H.264: genera un bitstream totalmente nuevo.
-    2. Padding 9:16 (1080x1920): formato vertical de Instagram.
+    2. Padding 9:16 (1080x1920): formato vertical estándar de Instagram.
     3. Variación aleatoria de contraste/saturación/brillo: ±0.3-1.0%.
     4. Píxel firma invisible en posición aleatoria: 1px modificado.
     5. Eliminación total de metadatos (-map_metadata -1).
@@ -1216,110 +1090,6 @@ class SubidaResumibleMeta:
         logger.error("   ❌ Error al publicar el contenedor.")
         return None
 
-    def subir_video_a_host_temporal(self, ruta_video: Path) -> Optional[str]:
-        """
-        Sube el vídeo a un host público temporal (Catbox / Litterbox / Tmpfiles)
-        para obtener una URL pública requerida por el flujo oficial de Trial Reels de Meta Graph API.
-        """
-        logger.info("📤 Subiendo vídeo a host temporal público para Trial Reel...")
-        
-        # Intentar 1: Catbox
-        try:
-            with open(ruta_video, "rb") as f:
-                r = requests.post(
-                    "https://catbox.moe/user/api.php",
-                    data={"reqtype": "fileupload"},
-                    files={"fileToUpload": f},
-                    timeout=60
-                )
-                if r.status_code == 200 and r.text.startswith("http"):
-                    dl_url = r.text.strip()
-                    logger.info("   ✅ URL pública creada (catbox): %s", dl_url)
-                    return dl_url
-        except Exception as e:
-            logger.error("   ❌ Error en catbox: %s", e)
-
-        # Intentar 2: Litterbox
-        try:
-            with open(ruta_video, "rb") as f:
-                r = requests.post(
-                    "https://litterbox.catbox.moe/resources/internals/api.php",
-                    data={"reqtype": "fileupload", "time": "24h"},
-                    files={"fileToUpload": f},
-                    timeout=60
-                )
-                if r.status_code == 200 and r.text.startswith("http"):
-                    dl_url = r.text.strip()
-                    logger.info("   ✅ URL pública creada (litterbox): %s", dl_url)
-                    return dl_url
-        except Exception as e:
-            logger.error("   ❌ Error en litterbox: %s", e)
-
-        # Intentar 3: Tmpfiles
-        try:
-            with open(ruta_video, "rb") as f:
-                r = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=60)
-                if r.status_code == 200:
-                    data = r.json()
-                    raw_url = data.get("data", {}).get("url", "")
-                    if raw_url:
-                        dl_url = raw_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
-                        logger.info("   ✅ URL pública creada (tmpfiles): %s", dl_url)
-                        return dl_url
-        except Exception as e:
-            logger.error("   ❌ Error en tmpfiles: %s", e)
-
-        return None
-
-    def crear_contenedor_trial_reel(
-        self,
-        video_url: str,
-        caption: str = "",
-    ) -> Optional[str]:
-        """
-        Crea un contenedor de Reel de Prueba (Trial Reel) siguiendo la llamada verificada:
-        POST https://graph.facebook.com/v20.0/{ig_user_id}/media?access_token={token}
-        Headers: Content-Type: application/json
-        Body:
-        {
-          "media_type": "REELS",
-          "video_url": "...",
-          "caption": "...",
-          "trial_params": {
-            "graduation_strategy": "MANUAL"
-          }
-        }
-        """
-        logger.info("📦 Creando contenedor de Reel de Prueba vía Meta Graph API (JSON)...")
-        url = f"{META_GRAPH_BASE}/{self.account_id}/media"
-        params = {"access_token": self.token}
-        headers = {"Content-Type": "application/json"}
-
-        payload = {
-            "media_type": "REELS",
-            "video_url": video_url,
-            "trial_params": {
-                "graduation_strategy": ESTRATEGIA_GRADUACION_REEL_PRUEBA
-            }
-        }
-        if caption:
-            payload["caption"] = caption
-
-        try:
-            resp = requests.post(url, params=params, json=payload, headers=headers, timeout=60)
-            datos_resp = resp.json()
-
-            if "id" in datos_resp:
-                contenedor_id = datos_resp["id"]
-                logger.info("   ✅ Contenedor de Trial Reel creado exitosamente: %s", contenedor_id)
-                return contenedor_id
-            elif "error" in datos_resp:
-                err = datos_resp["error"]
-                logger.error("   ❌ Error Meta Graph API Trial Reel [%s]: %s", err.get("type", "?"), err.get("message", "?"))
-        except Exception as e:
-            logger.error("   ❌ Error de red al crear Trial Reel: %s", e)
-        return None
-
     def publicar_reel_desde_archivo(
         self,
         ruta_video: Path,
@@ -1327,33 +1097,52 @@ class SubidaResumibleMeta:
         max_reintentos: int = 3,
     ) -> Optional[str]:
         """
-        Flujo completo para publicar un Reel de Prueba (Trial Reel) obligatoriamente
-        vía la API oficial verificada con URL pública y payload JSON.
+        Flujo completo para publicar un Reel directamente desde archivo local.
+
+        No requiere ningún hosting externo. El video va directamente
+        del disco del runner a los servidores de Meta.
+
+        Pasos:
+            1. Crear contenedor con upload_type=resumable
+            2. Subir binario a rupload.facebook.com
+            3. Esperar procesamiento (polling)
+            4. Publicar
+
+        Args:
+            ruta_video: Ruta al archivo de video local (MP4 sanitizado).
+            caption: Texto del caption del Reel.
+            max_reintentos: Número máximo de intentos.
+
+        Retorna:
+            str | None: Media ID del Reel publicado.
         """
-        logger.info("\n🎬 === PUBLICANDO REEL DE PRUEBA (Trial Reel) ===")
+        logger.info("\n🎬 === PUBLICANDO REEL (subida directa a Meta) ===")
 
         for intento in range(1, max_reintentos + 1):
             if intento > 1:
-                logger.info("   ⏳ Reintentando publicación del Trial Reel (intento %d/%d)...", intento, max_reintentos)
-                time.sleep(10)
+                logger.info("   ⏳ Reintentando publicación del Reel (intento %d/%d)...", intento, max_reintentos)
+                time.sleep(15)
 
-            url_temp = self.subir_video_a_host_temporal(ruta_video)
-            if not url_temp:
+            # Paso 1: Crear contenedor resumible
+            resultado = self.crear_contenedor_resumible("REELS", caption)
+            if not resultado:
+                continue
+            contenedor_id, uri_rupload = resultado
+
+            # Paso 2: Subir el binario del video
+            if not self.subir_binario_a_rupload(uri_rupload, ruta_video):
                 continue
 
-            contenedor_id = self.crear_contenedor_trial_reel(url_temp, caption)
-            if not contenedor_id:
-                continue
-
+            # Paso 3: Esperar a que Meta procese el video
             if not self.esperar_contenedor_listo(contenedor_id):
                 continue
 
+            # Paso 4: Publicar
             media_id = self.publicar_contenedor(contenedor_id)
             if media_id:
-                logger.info("🎉 ¡Reel de Prueba (Trial Reel) publicado con éxito! Media ID: %s", media_id)
                 return media_id
 
-        logger.error("❌ Fallaron todos los intentos para publicar el Reel de Prueba.")
+        logger.error("❌ Fallaron todos los intentos para publicar el Reel.")
         return None
 
     def publicar_story_desde_archivo(
