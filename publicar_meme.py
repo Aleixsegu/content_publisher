@@ -104,6 +104,8 @@ BUSQUEDAS_OBJETIVO = [
     "meme",
     "memes",
     "meme españa",
+    "espana",
+    "spanish",
     "meme español",
     "memes xokas",
     "memes chiringuito",
@@ -436,8 +438,7 @@ class ClienteTikTok:
         tag_candidate = keywords.lower().replace(" ", "").replace("ñ", "n").replace("#", "")
         tags_a_probar = [tag_candidate]
         if "espa" in keywords.lower() or "spain" in keywords.lower():
-            tags_a_probar.append("memeespana")
-            tags_a_probar.append("humorespanol")
+            tags_a_probar.extend(["memeespana", "humorespanol", "espana", "spanish"])
 
         vids_totales = []
         user_agent = random.choice(USER_AGENTS)
@@ -449,6 +450,8 @@ class ClienteTikTok:
 
         for tag in set(tags_a_probar):
             if tag in cls._CACHE_CHALLENGE_VIDEOS:
+                for v in cls._CACHE_CHALLENGE_VIDEOS[tag]:
+                    v["_busqueda_origen"] = keywords
                 vids_totales.extend(cls._CACHE_CHALLENGE_VIDEOS[tag])
                 continue
             try:
@@ -461,18 +464,26 @@ class ClienteTikTok:
                 if resp_info.status_code == 200 and resp_info.json().get("code") == 0:
                     cid = resp_info.json().get("data", {}).get("id")
                     if cid:
-                        resp_posts = requests.post(
-                            "https://www.tikwm.com/api/challenge/posts",
-                            data={"challenge_id": cid, "count": 30, "cursor": 0},
-                            headers=headers,
-                            timeout=10
-                        )
-                        if resp_posts.status_code == 200 and resp_posts.json().get("code") == 0:
-                            vids = resp_posts.json().get("data", {}).get("videos", [])
-                            if vids:
-                                logger.info("   → 🎯 TikWM Challenge '%s' (ID %s) devolvió %d vídeos", tag, cid, len(vids))
-                                cls._CACHE_CHALLENGE_VIDEOS[tag] = vids
-                                vids_totales.extend(vids)
+                        vids_tag = []
+                        for cursor in [0, 30]:
+                            resp_posts = requests.post(
+                                "https://www.tikwm.com/api/challenge/posts",
+                                data={"challenge_id": cid, "count": 30, "cursor": cursor},
+                                headers=headers,
+                                timeout=10
+                            )
+                            if resp_posts.status_code == 200 and resp_posts.json().get("code") == 0:
+                                vids = resp_posts.json().get("data", {}).get("videos", [])
+                                if vids:
+                                    vids_tag.extend(vids)
+                                    if len(vids) < 30:
+                                        break
+                        if vids_tag:
+                            logger.info("   → 🎯 TikWM Challenge '%s' (ID %s) devolvió %d vídeos", tag, cid, len(vids_tag))
+                            for v in vids_tag:
+                                v["_busqueda_origen"] = keywords
+                            cls._CACHE_CHALLENGE_VIDEOS[tag] = vids_tag
+                            vids_totales.extend(vids_tag)
             except Exception as e_cha:
                 logger.debug("Error en challenge TikWM para '%s': %s", tag, e_cha)
 
@@ -604,6 +615,7 @@ def normalizar_metadatos_tikwm(video_raw: dict) -> dict:
         "duration":     float(video_raw.get("duration", 0) or 0),
         "description":  video_raw.get("title", ""),
         "uploader":     author_unique_id,
+        "_busqueda_origen": video_raw.get("_busqueda_origen", "?"),
         "_raw": video_raw,
     }
 
@@ -737,18 +749,18 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
         todos_los_videos_raw.extend(videos_raw)
         time.sleep(0.5)
 
-    # Pase 1: Intentar filtro estricto de 24 horas
+    # Pase 1: Intentar filtro estricto de 24 horas (<24.0h)
     candidatos = evaluar_candidatos(max_horas=24.0)
 
-    # Pase 2: Ampliar a los últimos días (168h)
-    if not candidatos:
-        logger.info("ℹ️ No hay vídeos <24h en los hashtags. Evaluando vídeos de la semana...")
-        candidatos = evaluar_candidatos(max_horas=168.0)
+    # Pase 2: Si hay menos de TOP_N_VIDEOS candidatos <24h, incluir vídeos de las últimas 48h
+    if len(candidatos) < TOP_N_VIDEOS:
+        logger.info("ℹ️ Menos de %d candidatos <24h encontrados (%d hallados). Buscando también vídeos de las últimas 48h...", TOP_N_VIDEOS, len(candidatos))
+        candidatos = evaluar_candidatos(max_horas=48.0)
 
-    # Pase 3: Seleccionar mejores vídeos virales disponibles en los hashtags
+    # Pase 3: Si no hay candidatos <48h, ampliar a la semana (<168.0h)
     if not candidatos:
-        logger.info("ℹ️ Seleccionando los mejores vídeos virales disponibles en TikWM...")
-        candidatos = evaluar_candidatos(max_horas=None)
+        logger.info("ℹ️ Evaluando vídeos de la última semana (<168h)...")
+        candidatos = evaluar_candidatos(max_horas=168.0)
 
     if not candidatos:
         logger.warning("⚠️ No se encontraron vídeos válidos en TikTok. Fin limpio.")
