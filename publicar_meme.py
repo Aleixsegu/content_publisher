@@ -101,19 +101,15 @@ logger = logging.getLogger(__name__)
 
 # Búsquedas de palabras clave para encontrar memes de España (en orden de prioridad)
 BUSQUEDAS_OBJETIVO = [
-    "meme",
-    "memes",
     "meme españa",
-    "espana",
-    "spanish",
-    "meme español",
     "memes xokas",
     "memes chiringuito",
     "memes futbol",
-    "memes youtube",
-    "memes tiktok",
-    "memes twitch",
-    "memes memes",
+    "meme español",
+    "memes",
+    "meme",
+    "chistes",
+    "humor",
 ]
 
 # Región objetivo para filtrar resultados
@@ -438,7 +434,13 @@ class ClienteTikTok:
         tag_candidate = keywords.lower().replace(" ", "").replace("ñ", "n").replace("#", "")
         tags_a_probar = [tag_candidate]
         if "espa" in keywords.lower() or "spain" in keywords.lower():
-            tags_a_probar.extend(["memeespana", "humorespanol", "espana", "spanish"])
+            tags_a_probar.extend(["memeespana", "humorespanol", "memeespanol"])
+        elif "chiste" in keywords.lower():
+            tags_a_probar.extend(["chistes", "chiste", "humortiktok", "videosgraciosos"])
+        elif "humor" in keywords.lower():
+            tags_a_probar.extend(["humor", "humorespanol", "risas", "comedia", "gracioso"])
+        elif keywords.lower() in ["meme", "memes"]:
+            tags_a_probar.extend(["memes", "meme", "memesdelasemana", "memesdiarios"])
 
         vids_totales = []
         user_agent = random.choice(USER_AGENTS)
@@ -465,7 +467,7 @@ class ClienteTikTok:
                     cid = resp_info.json().get("data", {}).get("id")
                     if cid:
                         vids_tag = []
-                        for cursor in [0, 30]:
+                        for cursor in [0, 30, 60]:
                             resp_posts = requests.post(
                                 "https://www.tikwm.com/api/challenge/posts",
                                 data={"challenge_id": cid, "count": 30, "cursor": cursor},
@@ -727,14 +729,23 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
             if uploader in CUENTAS_EXCLUIDAS:
                 continue
 
-            horas = (ahora - video.get("timestamp", 0)) / 3600
-            if max_horas is not None and video.get("timestamp", 0) > 0 and horas > max_horas:
+            # Filtro estricto de antigüedad (< 24h)
+            ts = video.get("timestamp", 0)
+            if not ts:
+                continue
+            horas = (ahora - ts) / 3600
+            if max_horas is not None and horas > max_horas:
                 continue
 
             if not (5 <= video.get("duration", 0) <= 90):
                 continue
 
-            if video.get("view_count", 0) < 300:
+            # Verificación de relevancia de meme (evita noticias o vlogs no graciosos)
+            desc = video.get("description", "").lower()
+            orig = video.get("_busqueda_origen", "").lower()
+            meme_kw = ["meme", "humor", "chiste", "xokas", "chiringuito", "futbol", "gracioso", "comedia", "risa", "jaja"]
+            es_meme = any(k in desc or k in uploader or k in orig for k in meme_kw)
+            if not es_meme:
                 continue
 
             ids_vistos_local.add(video_id)
@@ -749,21 +760,16 @@ def descubrir_mejores_videos(cliente: ClienteTikTok) -> list[dict]:
         todos_los_videos_raw.extend(videos_raw)
         time.sleep(0.5)
 
-    # Pase 1: Intentar filtro estricto de 24 horas (<24.0h)
+    # Pase 1: Filtro estricto de 24 horas (<24.0h)
     candidatos = evaluar_candidatos(max_horas=24.0)
 
-    # Pase 2: Si hay menos de TOP_N_VIDEOS candidatos <24h, incluir vídeos de las últimas 48h
+    # Pase 2: Si no hay suficientes candidatos <24h, evaluar <48.0h
     if len(candidatos) < TOP_N_VIDEOS:
-        logger.info("ℹ️ Menos de %d candidatos <24h encontrados (%d hallados). Buscando también vídeos de las últimas 48h...", TOP_N_VIDEOS, len(candidatos))
+        logger.info("ℹ️ Menos de %d candidatos <24h encontrados (%d hallados). Buscando vídeos recientes de las últimas 48h...", TOP_N_VIDEOS, len(candidatos))
         candidatos = evaluar_candidatos(max_horas=48.0)
 
-    # Pase 3: Si no hay candidatos <48h, ampliar a la semana (<168.0h)
     if not candidatos:
-        logger.info("ℹ️ Evaluando vídeos de la última semana (<168h)...")
-        candidatos = evaluar_candidatos(max_horas=168.0)
-
-    if not candidatos:
-        logger.warning("⚠️ No se encontraron vídeos válidos en TikTok. Fin limpio.")
+        logger.warning("⚠️ No se encontraron vídeos válidos en TikTok (<24h/48h). Fin limpio.")
         return []
 
     candidatos.sort(key=lambda v: v["_puntuacion_viral"], reverse=True)
